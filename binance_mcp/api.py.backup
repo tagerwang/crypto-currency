@@ -245,78 +245,46 @@ def get_futures_price(symbol: str) -> Dict[str, Any]:
 
 
 def get_funding_rate(symbol: str) -> Dict[str, Any]:
-    """获取历史结算资金费率（最新已结算费率 + 历史记录）"""
+    """获取资金费率（历史结算费率）"""
     symbol = symbol.upper()
     if not symbol.endswith("USDT"):
         symbol = symbol + "USDT"
     
-    # 先获取实时数据（包含最新已结算费率）
-    premium_result = make_futures_request("/premiumIndex", {"symbol": symbol})
+    result = make_futures_request("/fundingRate", {"symbol": symbol, "limit": 10})
     
-    if not premium_result["success"]:
-        error_response = {"error": premium_result["error"], "symbol": symbol}
-        if premium_result.get("network_error"):
+    if not result["success"]:
+        error_response = {"error": result["error"], "symbol": symbol}
+        if result.get("network_error"):
             error_response["network_error"] = True
             error_response["stop_execution"] = True
-            error_response["user_action_required"] = premium_result.get("user_action_required", "")
+            error_response["user_action_required"] = result.get("user_action_required", "")
         return error_response
     
-    premium_data = premium_result["data"]
-    last_funding_rate = safe_float(premium_data.get("lastFundingRate", 0)) * 100
-    next_funding_time = premium_data.get("nextFundingTime", 0)
+    data = result["data"]
     
-    # 获取历史费率记录
-    history_result = make_futures_request("/fundingRate", {"symbol": symbol, "limit": 10})
-    history_data = []
-    if history_result["success"] and history_result["data"]:
-        history_data = [{"rate": f"{safe_float(d['fundingRate']) * 100:+.4f}%", 
-                        "time": timestamp_to_datetime(d['fundingTime'])} for d in history_result["data"][:5]]
+    if not data:
+        return {"error": f"无资金费率数据: {symbol}"}
+    
+    latest = data[0]
+    funding_rate = safe_float(latest["fundingRate"]) * 100
     
     # 计算年化费率 (每8小时一次，一天3次，一年365天)
-    annual_rate = last_funding_rate * 3 * 365
-    
-    # 计算下次结算倒计时
-    now_ts = datetime.now().timestamp() * 1000
-    countdown_ms = next_funding_time - now_ts
-    if countdown_ms > 0:
-        countdown_seconds = int(countdown_ms / 1000)
-        hours = countdown_seconds // 3600
-        minutes = (countdown_seconds % 3600) // 60
-        seconds = countdown_seconds % 60
-        countdown_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-    else:
-        countdown_str = "结算中..."
+    annual_rate = funding_rate * 3 * 365
     
     return {
         "symbol": symbol,
-        "historical_settled_rate": last_funding_rate,
-        "historical_settled_rate_display": f"{last_funding_rate:+.4f}%",
+        "funding_rate": funding_rate,
+        "funding_rate_display": f"{funding_rate:+.4f}%",
         "annual_rate": f"{annual_rate:+.2f}%",
-        "next_funding_time": timestamp_to_datetime(next_funding_time) if next_funding_time else "N/A",
-        "countdown": countdown_str,
-        "signal": "多头付费" if last_funding_rate > 0 else ("空头付费" if last_funding_rate < 0 else "中性"),
-        "rate_level": "极端负费率" if last_funding_rate < -0.5 else (
-            "高负费率" if last_funding_rate < -0.1 else (
-                "正常负费率" if last_funding_rate < 0 else (
-                    "正常正费率" if last_funding_rate < 0.1 else (
-                        "高正费率" if last_funding_rate < 0.5 else "极端正费率"
-                    )
-                )
-            )
-        ),
-        "history": history_data,
-        "note": "historical_settled_rate是上一期已结算的费率（历史数据）"
+        "funding_time": timestamp_to_datetime(latest["fundingTime"]),
+        "signal": "多头付费" if funding_rate > 0 else ("空头付费" if funding_rate < 0 else "中性"),
+        "history": [{"rate": f"{safe_float(d['fundingRate']) * 100:+.4f}%", 
+                    "time": timestamp_to_datetime(d['fundingTime'])} for d in data[:5]]
     }
 
 
 def get_realtime_funding_rate(symbol: str) -> Dict[str, Any]:
-    """获取实时资金费率（当前实时费率 + 预测费率）
-    
-    返回字段说明：
-    - current_realtime_rate: 当前实时生效的资金费率（上一期已结算，现在正在生效）
-    - predicted_next_rate: 下一期预测资金费率（即将在下次结算时生效）
-    - historical_settled_rate: 历史结算费率（与current_realtime_rate相同，保留兼容性）
-    """
+    """获取实时预测资金费率（下一期即将结算的费率）"""
     symbol = symbol.upper()
     if not symbol.endswith("USDT"):
         symbol = symbol + "USDT"
@@ -366,9 +334,8 @@ def get_realtime_funding_rate(symbol: str) -> Dict[str, Any]:
     else:
         countdown_str = "结算中..."
     
-    # 年化收益计算
-    annual_rate_current = last_funding_rate * 3 * 365
-    annual_rate_predicted = predicted_rate * 3 * 365
+    # 年化收益计算（假设每8小时结算一次）
+    annual_rate = predicted_rate * 3 * 365
     
     return {
         "symbol": symbol,
@@ -378,35 +345,19 @@ def get_realtime_funding_rate(symbol: str) -> Dict[str, Any]:
         "index_price_display": f"${index_price:,.4f}",
         "premium": premium,
         "premium_display": f"{premium:+.4f}%",
-        
-        # 当前实时费率（正在生效的费率）
-        "current_realtime_rate": last_funding_rate,
-        "current_realtime_rate_display": f"{last_funding_rate:+.4f}%",
-        "current_annual_rate": f"{annual_rate_current:+.2f}%",
-        "current_signal": "多头付费" if last_funding_rate > 0 else ("空头付费" if last_funding_rate < 0 else "中性"),
-        
-        # 预测费率（下次将要结算的费率）
-        "predicted_next_rate": predicted_rate,
-        "predicted_next_rate_display": f"{predicted_rate:+.5f}%",
-        "predicted_annual_rate": f"{annual_rate_predicted:+.2f}%",
-        "predicted_signal": "多头付费" if predicted_rate > 0 else ("空头付费" if predicted_rate < 0 else "中性"),
-        
-        # 历史结算费率（与current_realtime_rate相同，保留兼容性）
-        "historical_settled_rate": last_funding_rate,
-        "historical_settled_rate_display": f"{last_funding_rate:+.4f}%",
-        
-        # 结算时间
+        "predicted_funding_rate": predicted_rate,
+        "predicted_rate_display": f"{predicted_rate:+.5f}%",
+        "last_funding_rate": last_funding_rate,
+        "last_rate_display": f"{last_funding_rate:+.4f}%",
+        "annual_rate": f"{annual_rate:+.2f}%",
         "next_funding_time": timestamp_to_datetime(next_funding_time) if next_funding_time else "N/A",
         "countdown": countdown_str,
-        
-        # 费率等级（基于当前实时费率）
-        "rate_level": "极端负费率" if last_funding_rate < -0.5 else (
-            "高负费率" if last_funding_rate < -0.1 else (
-            "正常负费率" if last_funding_rate < 0 else (
-            "正常正费率" if last_funding_rate < 0.1 else (
-            "高正费率" if last_funding_rate < 0.5 else "极端正费率")))),
-        
-        "note": "⚠️ 重要说明：current_realtime_rate是当前实时生效的费率（用于交易决策），predicted_next_rate是下次预测费率（参考用）"
+        "signal": "多头付费" if predicted_rate > 0 else ("空头付费" if predicted_rate < 0 else "中性"),
+        "rate_level": "极端负费率" if predicted_rate < -0.5 else (
+            "高负费率" if predicted_rate < -0.1 else (
+            "正常负费率" if predicted_rate < 0 else (
+            "正常正费率" if predicted_rate < 0.1 else (
+            "高正费率" if predicted_rate < 0.5 else "极端正费率"))))
     }
 
 
@@ -501,7 +452,7 @@ def analyze_spot_vs_futures(symbol: str) -> Dict[str, Any]:
     """分析现货与合约价差"""
     spot = get_spot_price(symbol)
     futures = get_futures_price(symbol)
-    funding = get_realtime_funding_rate(symbol)  # 使用实时预测费率
+    funding = get_funding_rate(symbol)
     
     # 检查是否有网络错误
     if "error" in spot:
@@ -524,7 +475,7 @@ def analyze_spot_vs_futures(symbol: str) -> Dict[str, Any]:
         "futures_price": f"${futures_price:,.4f}",
         "premium": f"{premium:+.4f}%",
         "premium_type": "期货溢价" if premium > 0 else ("期货折价" if premium < 0 else "平价"),
-        "funding_rate": funding.get("predicted_rate_display", "N/A"),  # 使用预测费率
+        "funding_rate": funding.get("funding_rate_display", "N/A"),
         "annual_funding": funding.get("annual_rate", "N/A"),
         "analysis": {
             "market_sentiment": "偏多" if premium > 0.1 else ("偏空" if premium < -0.1 else "中性"),

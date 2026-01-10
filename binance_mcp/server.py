@@ -97,7 +97,7 @@ MCP_TOOLS = [
     # 技术分析
     {
         "name": "comprehensive_analysis",
-        "description": "综合技术分析：包含趋势判断、涨跌概率预测、RSI、MACD、布林带、支撑阻力位等",
+        "description": "综合技术分析（基于1小时K线）：包含趋势判断、涨跌概率预测、RSI、MACD、布林带、支撑阻力位等。⚠️ 所有指标均基于1小时周期，适用于短期交易决策",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -111,7 +111,7 @@ MCP_TOOLS = [
     },
     {
         "name": "analyze_kline_patterns",
-        "description": "K线形态分析：识别十字星、锤子线、吞没形态等",
+        "description": "K线形态分析（默认4小时K线）：识别十字星、锤子线、上吊线、吞没形态等经典K线形态。⚠️ 默认使用4小时K线，可通过interval参数调整周期",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -159,7 +159,7 @@ MCP_TOOLS = [
     },
     {
         "name": "get_funding_rate",
-        "description": "获取合约资金费率和年化收益（历史结算费率）",
+        "description": "获取历史结算资金费率（最新已结算费率 + 历史记录）- 返回historical_settled_rate字段",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -173,7 +173,7 @@ MCP_TOOLS = [
     },
     {
         "name": "get_realtime_funding_rate",
-        "description": "【实时】获取合约预测资金费率（下一期即将结算的费率），包含倒计时、溢价率等",
+        "description": "【推荐】获取实时资金费率（当前实时生效费率 + 预测费率）- 返回current_realtime_rate（当前实时费率）和predicted_next_rate（预测费率）字段，用于交易决策",
         "inputSchema": {
             "type": "object",
             "properties": {

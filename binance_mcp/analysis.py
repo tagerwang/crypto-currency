@@ -45,11 +45,23 @@ def generate_analysis_summary(trend: Dict, prediction: Dict, rsi: float, macd: D
 
 
 def comprehensive_analysis(symbol: str) -> Dict[str, Any]:
-    """综合技术分析"""
-    # 获取K线数据
+    """
+    综合技术分析（基于1小时K线）
+    
+    ⚠️ 重要说明：
+    - 本分析使用1小时K线数据（最近200根）
+    - RSI、MACD、布林带等指标均基于1小时周期
+    - 趋势判断、支撑阻力位等也是小时级别的分析
+    - 适用于短期交易决策（1-24小时）
+    - 如需日线或其他周期分析，请单独调用get_klines获取对应周期数据
+    """
+    # 获取1小时K线数据（最近200根，约8天数据）
     klines_data = get_klines(symbol, "1h", 200)
     
     if "error" in klines_data:
+        # 如果是网络错误，直接传递所有错误标记
+        if klines_data.get("network_error"):
+            return klines_data
         return klines_data
     
     klines = klines_data["klines"]
@@ -62,6 +74,9 @@ def comprehensive_analysis(symbol: str) -> Dict[str, Any]:
     # 获取实时行情
     ticker = get_ticker_24h(symbol)
     if "error" in ticker:
+        # 如果是网络错误，直接传递所有错误标记
+        if ticker.get("network_error"):
+            return ticker
         return ticker
     
     # 计算技术指标
@@ -83,6 +98,8 @@ def comprehensive_analysis(symbol: str) -> Dict[str, Any]:
         "change_24h": ticker["price_change_display"],
         "volume_24h": ticker["quote_volume_formatted"],
         "trend_emoji": ticker["trend_emoji"],
+        "analysis_timeframe": "1小时K线",
+        "analysis_note": "⚠️ 本分析基于1小时K线，所有技术指标（RSI/MACD/布林带）均为小时级别，适用于短期交易决策",
         
         "trend_analysis": trend,
         "prediction": prediction,
@@ -91,14 +108,14 @@ def comprehensive_analysis(symbol: str) -> Dict[str, Any]:
             "rsi": {
                 "value": rsi,
                 "signal": "超卖" if rsi < 30 else ("超买" if rsi > 70 else "中性"),
-                "description": f"RSI={rsi}，{'建议关注反弹' if rsi < 30 else ('注意回调风险' if rsi > 70 else '处于正常区间')}"
+                "description": f"RSI={rsi}（1小时K线），{'建议关注反弹' if rsi < 30 else ('注意回调风险' if rsi > 70 else '处于正常区间')}"
             },
             "macd": {
                 "macd_line": macd["macd"],
                 "signal_line": macd["signal"],
                 "histogram": macd["histogram"],
                 "signal": "多头" if macd["histogram"] > 0 else "空头",
-                "description": f"MACD柱状图{'为正，多头动能' if macd['histogram'] > 0 else '为负，空头动能'}"
+                "description": f"MACD柱状图{'为正，多头动能' if macd['histogram'] > 0 else '为负，空头动能'}（1小时K线）"
             },
             "bollinger_bands": {
                 "upper": f"${bb['upper']:,.4f}",
@@ -107,23 +124,26 @@ def comprehensive_analysis(symbol: str) -> Dict[str, Any]:
                 "bandwidth": f"{bb['bandwidth']:.2f}%",
                 "position": "上轨附近" if closes[-1] > bb["upper"] * 0.98 else (
                     "下轨附近" if closes[-1] < bb["lower"] * 1.02 else "中轨区域"
-                )
+                ),
+                "note": "基于1小时K线"
             },
             "moving_averages": {
                 "ma7": f"${ma7:,.4f}",
                 "ma20": f"${ma20:,.4f}",
                 "ma50": f"${ma50:,.4f}",
                 "price_vs_ma7": f"{(closes[-1] / ma7 - 1) * 100:+.2f}%",
-                "price_vs_ma20": f"{(closes[-1] / ma20 - 1) * 100:+.2f}%"
+                "price_vs_ma20": f"{(closes[-1] / ma20 - 1) * 100:+.2f}%",
+                "note": "均线基于1小时K线计算"
             }
         },
         
         "support_resistance": {
             "resistance_levels": [f"${r:,.4f}" for r in sr["resistance"][:3]],
-            "support_levels": [f"${s:,.4f}" for s in sr["support"][:3]]
+            "support_levels": [f"${s:,.4f}" for s in sr["support"][:3]],
+            "note": "基于1小时K线的高低点计算"
         },
         
-        "summary": generate_analysis_summary(trend, prediction, rsi, macd)
+        "summary": generate_analysis_summary(trend, prediction, rsi, macd) + "（1小时K线分析）"
     }
 
 
@@ -132,6 +152,9 @@ def analyze_market_factors(symbol: str) -> Dict[str, Any]:
     ticker = get_ticker_24h(symbol)
     
     if "error" in ticker:
+        # 如果是网络错误，直接传递所有错误标记
+        if ticker.get("network_error"):
+            return ticker
         return ticker
     
     # 获取BTC和ETH作为市场参考
@@ -189,10 +212,23 @@ def analyze_market_factors(symbol: str) -> Dict[str, Any]:
 
 
 def analyze_kline_patterns(symbol: str, interval: str = "4h") -> Dict[str, Any]:
-    """分析K线形态"""
+    """
+    分析K线形态（默认4小时K线）
+    
+    识别常见K线形态：十字星、锤子线、上吊线、吞没形态等
+    
+    参数：
+    - symbol: 交易对符号
+    - interval: K线周期，默认"4h"（4小时），可选：1m,3m,5m,15m,30m,1h,2h,4h,6h,8h,12h,1d,3d,1w,1M
+    
+    ⚠️ 注意：分析结果的时间周期取决于interval参数，默认为4小时级别
+    """
     klines_data = get_klines(symbol, interval, 100)
     
     if "error" in klines_data:
+        # 如果是网络错误，直接传递所有错误标记
+        if klines_data.get("network_error"):
+            return klines_data
         return klines_data
     
     klines = klines_data["klines"]
@@ -273,6 +309,7 @@ def analyze_kline_patterns(symbol: str, interval: str = "4h") -> Dict[str, Any]:
     return {
         "symbol": klines_data["symbol"],
         "interval": interval,
+        "interval_note": f"⚠️ 本分析基于{interval}周期K线，形态信号的时间级别与此周期对应",
         "overall_pattern": overall_pattern,
         "recent_patterns": patterns[-5:] if patterns else [],
         "pattern_count": len(patterns),
@@ -284,7 +321,7 @@ def analyze_kline_patterns(symbol: str, interval: str = "4h") -> Dict[str, Any]:
             "close": f"${klines[-1]['close']:,.4f}",
             "volume": format_number(klines[-1]["volume"])
         },
-        "analysis_summary": f"当前处于{overall_pattern}，" + (
+        "analysis_summary": f"当前处于{overall_pattern}（基于{interval}K线），" + (
             f"近期发现{len(patterns)}个形态信号" if patterns else "暂无明显形态信号"
         )
     }

@@ -346,6 +346,7 @@ def predict_price_probability(closes: List[float], rsi: float, macd: Dict, bb: D
 def make_spot_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
     """发起现货API请求，自动尝试备用域名"""
     last_error = None
+    is_network_error = False
     
     for base_url in SPOT_BASE_URLS:
         url = f"{base_url}{endpoint}"
@@ -361,17 +362,35 @@ def make_spot_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
         except requests.exceptions.HTTPError as e:
             if response.status_code == 451:
                 last_error = "API访问受地区限制，请使用VPN或代理"
+                is_network_error = True
                 continue
             last_error = f"HTTP错误: {response.status_code}"
+        except requests.exceptions.ConnectionError as e:
+            last_error = "网络连接失败，请检查网络或代理设置"
+            is_network_error = True
+            continue
+        except requests.exceptions.Timeout as e:
+            last_error = "请求超时，请检查网络连接"
+            is_network_error = True
+            continue
         except requests.exceptions.RequestException as e:
             last_error = str(e)
+            is_network_error = True
             continue
     
-    return {"success": False, "error": last_error or "所有API端点均不可用，请检查网络或使用代理"}
+    error_msg = last_error or "所有API端点均不可用，请检查网络或使用代理"
+    return {
+        "success": False, 
+        "error": error_msg,
+        "network_error": True,
+        "stop_execution": True,
+        "user_action_required": "⚠️ 检测到网络问题，请先确保VPN/代理正常连接后再重试。当前无法获取准确数据。"
+    }
 
 def make_futures_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
     """发起合约API请求，自动尝试备用域名"""
     last_error = None
+    is_network_error = False
     
     for base_url in FUTURES_BASE_URLS:
         url = f"{base_url}{endpoint}"
@@ -386,13 +405,30 @@ def make_futures_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
         except requests.exceptions.HTTPError as e:
             if response.status_code == 451:
                 last_error = "API访问受地区限制，请使用VPN或代理"
+                is_network_error = True
                 continue
             last_error = f"HTTP错误: {response.status_code}"
+        except requests.exceptions.ConnectionError as e:
+            last_error = "网络连接失败，请检查网络或代理设置"
+            is_network_error = True
+            continue
+        except requests.exceptions.Timeout as e:
+            last_error = "请求超时，请检查网络连接"
+            is_network_error = True
+            continue
         except requests.exceptions.RequestException as e:
             last_error = str(e)
+            is_network_error = True
             continue
     
-    return {"success": False, "error": last_error or "所有API端点均不可用"}
+    error_msg = last_error or "所有API端点均不可用"
+    return {
+        "success": False, 
+        "error": error_msg,
+        "network_error": True,
+        "stop_execution": True,
+        "user_action_required": "⚠️ 检测到网络问题，请先确保VPN/代理正常连接后再重试。当前无法获取准确数据。"
+    }
 
 def get_spot_price(symbol: str) -> Dict[str, Any]:
     """获取现货价格"""
@@ -403,7 +439,12 @@ def get_spot_price(symbol: str) -> Dict[str, Any]:
     result = make_spot_request("/ticker/price", {"symbol": symbol})
     
     if not result["success"]:
-        return {"error": result["error"], "symbol": symbol}
+        error_response = {"error": result["error"], "symbol": symbol}
+        if result.get("network_error"):
+            error_response["network_error"] = True
+            error_response["stop_execution"] = True
+            error_response["user_action_required"] = result.get("user_action_required", "")
+        return error_response
     
     data = result["data"]
     return {
@@ -421,7 +462,12 @@ def get_ticker_24h(symbol: str) -> Dict[str, Any]:
     result = make_spot_request("/ticker/24hr", {"symbol": symbol})
     
     if not result["success"]:
-        return {"error": result["error"], "symbol": symbol}
+        error_response = {"error": result["error"], "symbol": symbol}
+        if result.get("network_error"):
+            error_response["network_error"] = True
+            error_response["stop_execution"] = True
+            error_response["user_action_required"] = result.get("user_action_required", "")
+        return error_response
     
     data = result["data"]
     price_change_pct = safe_float(data.get("priceChangePercent", 0))
@@ -469,7 +515,12 @@ def get_klines(symbol: str, interval: str = "1h", limit: int = 100) -> Dict[str,
     })
     
     if not result["success"]:
-        return {"error": result["error"], "symbol": symbol}
+        error_response = {"error": result["error"], "symbol": symbol}
+        if result.get("network_error"):
+            error_response["network_error"] = True
+            error_response["stop_execution"] = True
+            error_response["user_action_required"] = result.get("user_action_required", "")
+        return error_response
     
     data = result["data"]
     klines = []
@@ -502,7 +553,12 @@ def get_futures_price(symbol: str) -> Dict[str, Any]:
     result = make_futures_request("/ticker/price", {"symbol": symbol})
     
     if not result["success"]:
-        return {"error": result["error"], "symbol": symbol}
+        error_response = {"error": result["error"], "symbol": symbol}
+        if result.get("network_error"):
+            error_response["network_error"] = True
+            error_response["stop_execution"] = True
+            error_response["user_action_required"] = result.get("user_action_required", "")
+        return error_response
     
     data = result["data"]
     return {
@@ -513,43 +569,81 @@ def get_futures_price(symbol: str) -> Dict[str, Any]:
     }
 
 def get_funding_rate(symbol: str) -> Dict[str, Any]:
-    """获取资金费率"""
+    """获取资金费率（最新已结算费率 + 历史记录）"""
     symbol = symbol.upper()
     if not symbol.endswith("USDT"):
         symbol = symbol + "USDT"
     
-    result = make_futures_request("/fundingRate", {"symbol": symbol, "limit": 10})
+    # 先获取实时数据（包含最新已结算费率）
+    premium_result = make_futures_request("/premiumIndex", {"symbol": symbol})
     
-    if not result["success"]:
-        return {"error": result["error"], "symbol": symbol}
+    if not premium_result["success"]:
+        error_response = {"error": premium_result["error"], "symbol": symbol}
+        if premium_result.get("network_error"):
+            error_response["network_error"] = True
+            error_response["stop_execution"] = True
+            error_response["user_action_required"] = premium_result.get("user_action_required", "")
+        return error_response
     
-    data = result["data"]
+    premium_data = premium_result["data"]
+    last_funding_rate = safe_float(premium_data.get("lastFundingRate", 0)) * 100
+    next_funding_time = premium_data.get("nextFundingTime", 0)
     
-    if not data:
-        return {"error": f"无资金费率数据: {symbol}"}
-    
-    latest = data[0]
-    funding_rate = safe_float(latest["fundingRate"]) * 100
+    # 获取历史费率记录
+    history_result = make_futures_request("/fundingRate", {"symbol": symbol, "limit": 10})
+    history_data = []
+    if history_result["success"] and history_result["data"]:
+        history_data = [{"rate": f"{safe_float(d['fundingRate']) * 100:+.4f}%", 
+                        "time": timestamp_to_datetime(d['fundingTime'])} for d in history_result["data"][:5]]
     
     # 计算年化费率 (每8小时一次，一天3次，一年365天)
-    annual_rate = funding_rate * 3 * 365
+    annual_rate = last_funding_rate * 3 * 365
+    
+    # 计算下次结算倒计时
+    now_ts = datetime.now().timestamp() * 1000
+    countdown_ms = next_funding_time - now_ts
+    if countdown_ms > 0:
+        countdown_seconds = int(countdown_ms / 1000)
+        hours = countdown_seconds // 3600
+        minutes = (countdown_seconds % 3600) // 60
+        seconds = countdown_seconds % 60
+        countdown_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    else:
+        countdown_str = "结算中..."
     
     return {
         "symbol": symbol,
-        "funding_rate": funding_rate,
-        "funding_rate_display": f"{funding_rate:+.4f}%",
+        "funding_rate": last_funding_rate,
+        "funding_rate_display": f"{last_funding_rate:+.4f}%",
         "annual_rate": f"{annual_rate:+.2f}%",
-        "funding_time": timestamp_to_datetime(latest["fundingTime"]),
-        "signal": "多头付费" if funding_rate > 0 else ("空头付费" if funding_rate < 0 else "中性"),
-        "history": [{"rate": f"{safe_float(d['fundingRate']) * 100:+.4f}%", 
-                    "time": timestamp_to_datetime(d['fundingTime'])} for d in data[:5]]
+        "next_funding_time": timestamp_to_datetime(next_funding_time) if next_funding_time else "N/A",
+        "countdown": countdown_str,
+        "signal": "多头付费" if last_funding_rate > 0 else ("空头付费" if last_funding_rate < 0 else "中性"),
+        "rate_level": "极端负费率" if last_funding_rate < -0.5 else (
+            "高负费率" if last_funding_rate < -0.1 else (
+                "正常负费率" if last_funding_rate < 0 else (
+                    "正常正费率" if last_funding_rate < 0.1 else (
+                        "高正费率" if last_funding_rate < 0.5 else "极端正费率"
+                    )
+                )
+            )
+        ),
+        "history": history_data
     }
 
 def analyze_spot_vs_futures(symbol: str) -> Dict[str, Any]:
     """分析现货与合约价差"""
     spot = get_spot_price(symbol)
     futures = get_futures_price(symbol)
-    funding = get_funding_rate(symbol)
+    funding = get_realtime_funding_rate(symbol)  # 使用实时预测费率
+    
+    # 检查是否有网络错误
+    if "error" in spot:
+        if spot.get("network_error"):
+            return spot
+    if "error" in futures:
+        if futures.get("network_error"):
+            return futures
     
     if "error" in spot or "error" in futures:
         return {"error": "获取价格数据失败"}
@@ -564,7 +658,7 @@ def analyze_spot_vs_futures(symbol: str) -> Dict[str, Any]:
         "futures_price": f"${futures_price:,.4f}",
         "premium": f"{premium:+.4f}%",
         "premium_type": "期货溢价" if premium > 0 else ("期货折价" if premium < 0 else "平价"),
-        "funding_rate": funding.get("funding_rate_display", "N/A"),
+        "funding_rate": funding.get("predicted_rate_display", "N/A"),  # 使用预测费率
         "annual_funding": funding.get("annual_rate", "N/A"),
         "analysis": {
             "market_sentiment": "偏多" if premium > 0.1 else ("偏空" if premium < -0.1 else "中性"),
@@ -581,6 +675,9 @@ def comprehensive_analysis(symbol: str) -> Dict[str, Any]:
     klines_data = get_klines(symbol, "1h", 200)
     
     if "error" in klines_data:
+        # 如果是网络错误，直接传递所有错误标记
+        if klines_data.get("network_error"):
+            return klines_data
         return klines_data
     
     klines = klines_data["klines"]
@@ -593,6 +690,9 @@ def comprehensive_analysis(symbol: str) -> Dict[str, Any]:
     # 获取实时行情
     ticker = get_ticker_24h(symbol)
     if "error" in ticker:
+        # 如果是网络错误，直接传递所有错误标记
+        if ticker.get("network_error"):
+            return ticker
         return ticker
     
     # 计算技术指标
@@ -691,7 +791,12 @@ def search_symbols(keyword: str) -> Dict[str, Any]:
     result = make_spot_request("/exchangeInfo", {})
     
     if not result["success"]:
-        return {"error": result["error"]}
+        error_response = {"error": result["error"]}
+        if result.get("network_error"):
+            error_response["network_error"] = True
+            error_response["stop_execution"] = True
+            error_response["user_action_required"] = result.get("user_action_required", "")
+        return error_response
     
     data = result["data"]
     keyword = keyword.upper()
@@ -717,7 +822,12 @@ def get_top_gainers_losers(limit: int = 10) -> Dict[str, Any]:
     result = make_spot_request("/ticker/24hr", {})
     
     if not result["success"]:
-        return {"error": result["error"]}
+        error_response = {"error": result["error"]}
+        if result.get("network_error"):
+            error_response["network_error"] = True
+            error_response["stop_execution"] = True
+            error_response["user_action_required"] = result.get("user_action_required", "")
+        return error_response
     
     data = result["data"]
     
@@ -1487,6 +1597,9 @@ def analyze_market_factors(symbol: str) -> Dict[str, Any]:
     ticker = get_ticker_24h(symbol)
     
     if "error" in ticker:
+        # 如果是网络错误，直接传递所有错误标记
+        if ticker.get("network_error"):
+            return ticker
         return ticker
     
     # 获取BTC和ETH作为市场参考
@@ -1549,6 +1662,9 @@ def analyze_kline_patterns(symbol: str, interval: str = "4h") -> Dict[str, Any]:
     klines_data = get_klines(symbol, interval, 100)
     
     if "error" in klines_data:
+        # 如果是网络错误，直接传递所有错误标记
+        if klines_data.get("network_error"):
+            return klines_data
         return klines_data
     
     klines = klines_data["klines"]
