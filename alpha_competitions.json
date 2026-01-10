@@ -1,0 +1,96 @@
+{
+  "last_updated": "2026-01-10 11:27:36",
+  "update_instructions": "请同步更新此文件和 binance_mcp.py 中的 ALPHA_COMPETITIONS 配置",
+  "active_competitions": [
+    {
+      "symbol": "H",
+      "name": "H Alpha 交易竞赛",
+      "token_name": "H",
+      "start_time": "2026-01-09 21:00:00",
+      "end_time": "2026-01-16 21:00:00",
+      "timezone": "UTC+8",
+      "total_reward": null,
+      "winner_count": null,
+      "per_user_reward": null,
+      "status": "进行中",
+      "note": "第一期H代币交易竞赛，待补充奖励信息"
+    },
+    {
+      "symbol": "TIMI",
+      "name": "2nd TIMI Alpha 交易竞赛",
+      "token_name": "MetaArena (TIMI)",
+      "coingecko_id": "metaarena",
+      "start_time": "2026-01-05 21:00:00",
+      "end_time": "2026-01-12 21:00:00",
+      "timezone": "UTC+8",
+      "total_reward": 7178800,
+      "winner_count": 5240,
+      "per_user_reward": 1370,
+      "status": "进行中",
+      "note": "第二阶段TIMI交易竞赛，按买入交易量排名"
+    }
+  ],
+  "ended_competitions": [
+    {
+      "symbol": "ARB",
+      "name": "ARB 交易竞赛",
+      "start_time": "2025-12-12 00:00:00",
+      "end_time": "2025-12-26 00:00:00",
+      "total_reward": 4500000,
+      "winner_count": 12500,
+      "per_user_reward": 360,
+      "status": "已结束"
+    },
+    {
+      "symbol": "LAB",
+      "name": "LAB 交易竞赛",
+      "start_time": "2025-11-29 00:00:00",
+      "end_time": "2025-12-13 00:00:00",
+      "total_reward": 5395000,
+      "winner_count": 8300,
+      "per_user_reward": 650,
+      "status": "已结束"
+    },
+    {
+      "symbol": "ARIA",
+      "name": "AriaAI 交易竞赛",
+      "start_time": "2025-11-07 00:00:00",
+      "end_time": "2025-11-21 00:00:00",
+      "total_reward": 5658000,
+      "winner_count": null,
+      "per_user_reward": null,
+      "status": "已结束"
+    }
+  ],
+  "alpha_airdrops": [
+    {
+      "symbol": "BLUAI",
+      "name": "Bluwhale",
+      "launch_date": "2025-10-21",
+      "min_points": 220,
+      "airdrop_amount": 1600,
+      "status": "已结束"
+    },
+    {
+      "symbol": "OOOO",
+      "name": "oooo Protocol",
+      "launch_date": "2025-12-30",
+      "min_points": 200,
+      "airdrop_amount": 1000,
+      "status": "已结束"
+    }
+  ],
+  "coingecko_id_mapping": {
+    "TIMI": "metaarena",
+    "H": null,
+    "ARB": "arbitrum",
+    "LAB": null,
+    "ARIA": null
+  },
+  "how_to_update": [
+    "1. 访问币安 Alpha 活动页面获取最新信息",
+    "2. 更新此 JSON 文件中的竞赛配置",
+    "3. 同步更新 binance_mcp.py 中的 ALPHA_COMPETITIONS 字典",
+    "4. 如果是新币，尝试在 CoinGecko 搜索对应的 coin_id"
+  ]
+}
