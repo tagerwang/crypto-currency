@@ -288,8 +288,8 @@ def get_spot_price(symbol: str, try_alpha: bool = True) -> Dict[str, Any]:
     }
 
 
-def get_ticker_24h(symbol: str, try_alpha: bool = True) -> Dict[str, Any]:
-    """获取24小时行情数据（现货优先，找不到时尝试Alpha市场）"""
+def get_ticker_24h(symbol: str, try_alpha: bool = True, try_futures: bool = True) -> Dict[str, Any]:
+    """获取24小时行情数据（现货优先，找不到时尝试Alpha市场，再尝试合约市场）"""
     symbol = symbol.upper()
     if not symbol.endswith("USDT"):
         symbol = symbol + "USDT"
@@ -297,11 +297,19 @@ def get_ticker_24h(symbol: str, try_alpha: bool = True) -> Dict[str, Any]:
     result = make_spot_request("/ticker/24hr", {"symbol": symbol})
     
     if not result["success"]:
-        # 如果是HTTP 400错误（交易对不存在），尝试Alpha市场
-        if try_alpha and "400" in str(result.get("error", "")):
-            alpha_result = get_alpha_ticker(symbol)
-            if "error" not in alpha_result:
-                return alpha_result
+        # 如果是HTTP 400错误（交易对不存在），依次尝试Alpha市场和合约市场
+        if "400" in str(result.get("error", "")):
+            # 先尝试Alpha市场
+            if try_alpha:
+                alpha_result = get_alpha_ticker(symbol)
+                if "error" not in alpha_result:
+                    return alpha_result
+            
+            # Alpha失败或未启用，尝试合约市场
+            if try_futures:
+                futures_result = get_futures_ticker_24h(symbol)
+                if "error" not in futures_result:
+                    return futures_result
         
         error_response = {"error": result["error"], "symbol": symbol}
         if result.get("network_error"):
@@ -343,8 +351,8 @@ def get_multiple_tickers(symbols: List[str]) -> Dict[str, Any]:
     return results
 
 
-def get_klines(symbol: str, interval: str = "1h", limit: int = 100, try_alpha: bool = True) -> Dict[str, Any]:
-    """获取K线数据（现货优先，找不到时尝试Alpha市场）"""
+def get_klines(symbol: str, interval: str = "1h", limit: int = 100, try_alpha: bool = True, try_futures: bool = True) -> Dict[str, Any]:
+    """获取K线数据（现货优先，找不到时尝试Alpha市场，再尝试合约市场）"""
     symbol = symbol.upper()
     if not symbol.endswith("USDT"):
         symbol = symbol + "USDT"
@@ -359,11 +367,19 @@ def get_klines(symbol: str, interval: str = "1h", limit: int = 100, try_alpha: b
     })
     
     if not result["success"]:
-        # 如果是HTTP 400错误（交易对不存在），尝试Alpha市场
-        if try_alpha and "400" in str(result.get("error", "")):
-            alpha_result = get_alpha_klines(symbol, interval, limit)
-            if "error" not in alpha_result:
-                return alpha_result
+        # 如果是HTTP 400错误（交易对不存在），依次尝试Alpha市场和合约市场
+        if "400" in str(result.get("error", "")):
+            # 先尝试Alpha市场
+            if try_alpha:
+                alpha_result = get_alpha_klines(symbol, interval, limit)
+                if "error" not in alpha_result:
+                    return alpha_result
+            
+            # Alpha失败或未启用，尝试合约市场
+            if try_futures:
+                futures_result = get_futures_klines(symbol, interval, limit)
+                if "error" not in futures_result:
+                    return futures_result
         
         error_response = {"error": result["error"], "symbol": symbol}
         if result.get("network_error"):
@@ -495,6 +511,93 @@ def get_futures_price(symbol: str) -> Dict[str, Any]:
         "price": safe_float(data["price"]),
         "price_formatted": f"${safe_float(data['price']):,.4f}",
         "time": timestamp_to_datetime(data["time"])
+    }
+
+
+def get_futures_ticker_24h(symbol: str) -> Dict[str, Any]:
+    """获取合约24小时行情数据"""
+    symbol = symbol.upper()
+    if not symbol.endswith("USDT"):
+        symbol = symbol + "USDT"
+    
+    result = make_futures_request("/ticker/24hr", {"symbol": symbol})
+    
+    if not result["success"]:
+        error_response = {"error": result["error"], "symbol": symbol}
+        if result.get("network_error"):
+            error_response["network_error"] = True
+            error_response["stop_execution"] = True
+            error_response["user_action_required"] = result.get("user_action_required", "")
+        return error_response
+    
+    data = result["data"]
+    price_change_pct = safe_float(data.get("priceChangePercent", 0))
+    
+    return {
+        "symbol": data["symbol"],
+        "market": "合约",
+        "price": safe_float(data["lastPrice"]),
+        "price_formatted": f"${safe_float(data['lastPrice']):,.4f}",
+        "price_change": safe_float(data["priceChange"]),
+        "price_change_percent": price_change_pct,
+        "price_change_display": f"{price_change_pct:+.2f}%",
+        "high_24h": safe_float(data["highPrice"]),
+        "low_24h": safe_float(data["lowPrice"]),
+        "volume_24h": safe_float(data["volume"]),
+        "volume_24h_formatted": format_number(safe_float(data["volume"])),
+        "quote_volume_24h": safe_float(data["quoteVolume"]),
+        "quote_volume_formatted": f"${format_number(safe_float(data['quoteVolume']))}",
+        "open_price": safe_float(data["openPrice"]),
+        "weighted_avg_price": safe_float(data["weightedAvgPrice"]),
+        "trade_count": int(data.get("count", 0)),
+        "trend_emoji": "🟢" if price_change_pct > 0 else ("🔴" if price_change_pct < 0 else "⚪")
+    }
+
+
+def get_futures_klines(symbol: str, interval: str = "1h", limit: int = 100) -> Dict[str, Any]:
+    """获取合约K线数据"""
+    symbol = symbol.upper()
+    if not symbol.endswith("USDT"):
+        symbol = symbol + "USDT"
+    
+    if interval not in KLINE_INTERVALS:
+        return {"error": f"不支持的时间周期: {interval}，支持的周期: {list(KLINE_INTERVALS.keys())}"}
+    
+    result = make_futures_request("/klines", {
+        "symbol": symbol,
+        "interval": interval,
+        "limit": min(limit, 1000)
+    })
+    
+    if not result["success"]:
+        error_response = {"error": result["error"], "symbol": symbol}
+        if result.get("network_error"):
+            error_response["network_error"] = True
+            error_response["stop_execution"] = True
+            error_response["user_action_required"] = result.get("user_action_required", "")
+        return error_response
+    
+    data = result["data"]
+    klines = []
+    for k in data:
+        klines.append({
+            "open_time": timestamp_to_datetime(k[0]),
+            "open": safe_float(k[1]),
+            "high": safe_float(k[2]),
+            "low": safe_float(k[3]),
+            "close": safe_float(k[4]),
+            "volume": safe_float(k[5]),
+            "close_time": timestamp_to_datetime(k[6]),
+            "quote_volume": safe_float(k[7]),
+            "trades": int(k[8])
+        })
+    
+    return {
+        "symbol": symbol,
+        "market": "合约",
+        "interval": interval,
+        "count": len(klines),
+        "klines": klines
     }
 
 
