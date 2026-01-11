@@ -21,6 +21,9 @@ SPOT_BASE_URL = SPOT_BASE_URLS[0]
 FUTURES_BASE_URL = FUTURES_BASE_URLS[0]
 COIN_FUTURES_BASE_URL = "https://dapi.binance.com/dapi/v1"
 
+# 币安Alpha API（用于Alpha代币交易数据）
+ALPHA_BASE_URL = "https://www.binance.com/bapi/defi/v1/public/alpha-trade"
+
 # 请求头，模拟浏览器访问
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",

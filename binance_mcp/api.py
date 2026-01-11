@@ -7,8 +7,15 @@ import requests
 from typing import Dict, List, Any
 from datetime import datetime
 
-from .config import SPOT_BASE_URLS, FUTURES_BASE_URLS, HEADERS, KLINE_INTERVALS
+from .config import SPOT_BASE_URLS, FUTURES_BASE_URLS, HEADERS, KLINE_INTERVALS, ALPHA_BASE_URL
 from .utils import format_number, timestamp_to_datetime, safe_float
+
+
+# Alpha代币符号缓存
+_alpha_symbols_cache = None
+_alpha_symbols_cache_time = None
+_alpha_token_list_cache = None
+_alpha_token_list_cache_time = None
 
 
 def make_spot_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
@@ -100,8 +107,151 @@ def make_futures_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
     }
 
 
-def get_spot_price(symbol: str) -> Dict[str, Any]:
-    """获取现货价格"""
+def make_alpha_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
+    """发起Alpha API请求"""
+    url = f"{ALPHA_BASE_URL}{endpoint}"
+    try:
+        response = requests.get(url, params=params, headers=HEADERS, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get("success") or data.get("code") == "000000":
+            return {"success": True, "data": data.get("data", data)}
+        return {"success": False, "error": data.get("message", "Alpha API返回错误")}
+    except requests.exceptions.HTTPError as e:
+        return {"success": False, "error": f"HTTP错误: {response.status_code}"}
+    except requests.exceptions.RequestException as e:
+        return {"success": False, "error": str(e)}
+
+
+def get_alpha_token_list() -> Dict[str, Any]:
+    """获取Alpha代币列表（包含代币名称映射）"""
+    global _alpha_token_list_cache, _alpha_token_list_cache_time
+    
+    # 缓存5分钟
+    now = datetime.now()
+    if _alpha_token_list_cache and _alpha_token_list_cache_time:
+        cache_age = (now - _alpha_token_list_cache_time).total_seconds()
+        if cache_age < 300:
+            return _alpha_token_list_cache
+    
+    url = "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/cex/alpha/all/token/list"
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get("code") == "000000":
+            result = {"success": True, "data": data.get("data", [])}
+            _alpha_token_list_cache = result
+            _alpha_token_list_cache_time = now
+            return result
+        return {"success": False, "error": data.get("message", "获取代币列表失败")}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def get_alpha_exchange_info() -> Dict[str, Any]:
+    """获取Alpha交易所信息（包含所有Alpha代币列表）"""
+    global _alpha_symbols_cache, _alpha_symbols_cache_time
+    
+    # 缓存5分钟
+    now = datetime.now()
+    if _alpha_symbols_cache and _alpha_symbols_cache_time:
+        cache_age = (now - _alpha_symbols_cache_time).total_seconds()
+        if cache_age < 300:
+            return _alpha_symbols_cache
+    
+    result = make_alpha_request("/get-exchange-info")
+    
+    if result["success"]:
+        _alpha_symbols_cache = result
+        _alpha_symbols_cache_time = now
+    
+    return result
+
+
+def is_alpha_token(symbol: str) -> bool:
+    """检查是否为Alpha代币"""
+    symbol = symbol.upper()
+    if not symbol.endswith("USDT"):
+        symbol = symbol + "USDT"
+    
+    exchange_info = get_alpha_exchange_info()
+    if not exchange_info.get("success"):
+        return False
+    
+    data = exchange_info.get("data", {})
+    symbols = data.get("symbols", [])
+    
+    for s in symbols:
+        # Alpha代币格式可能是 ALPHA_XXX 或直接是代币名
+        if s.get("symbol") == symbol or s.get("baseAsset", "").upper() == symbol.replace("USDT", ""):
+            return True
+        # 检查baseAsset是否包含代币名（如 ALPHA_105 对应某个代币）
+        base_asset = s.get("baseAsset", "")
+        if symbol.replace("USDT", "") in base_asset.upper():
+            return True
+    
+    return False
+
+
+def get_alpha_ticker(symbol: str) -> Dict[str, Any]:
+    """获取Alpha代币24小时行情"""
+    symbol = symbol.upper()
+    if symbol.endswith("USDT"):
+        symbol = symbol[:-4]  # 去掉USDT后缀
+    
+    # 从代币列表获取信息
+    token_list = get_alpha_token_list()
+    if not token_list.get("success"):
+        return {"error": "无法获取Alpha代币列表", "symbol": symbol}
+    
+    tokens = token_list.get("data", [])
+    
+    # 查找匹配的代币
+    token_info = None
+    for t in tokens:
+        if t.get("symbol", "").upper() == symbol or t.get("name", "").upper() == symbol:
+            token_info = t
+            break
+    
+    if not token_info:
+        return {"error": f"未找到Alpha代币: {symbol}", "symbol": symbol}
+    
+    # 从token_info中提取行情数据
+    price = safe_float(token_info.get("price", 0))
+    price_change_pct = safe_float(token_info.get("percentChange24h", 0))
+    volume_24h = safe_float(token_info.get("volume24h", 0))
+    high_24h = safe_float(token_info.get("priceHigh24h", 0))
+    low_24h = safe_float(token_info.get("priceLow24h", 0))
+    market_cap = safe_float(token_info.get("marketCap", 0))
+    
+    return {
+        "symbol": f"{token_info.get('symbol')}USDT",
+        "alpha_id": token_info.get("alphaId"),
+        "name": token_info.get("name"),
+        "market": "Alpha",
+        "price": price,
+        "price_formatted": f"${price:,.6f}",
+        "price_change_percent": price_change_pct,
+        "price_change_display": f"{price_change_pct:+.2f}%",
+        "high_24h": high_24h,
+        "low_24h": low_24h,
+        "volume_24h": volume_24h,
+        "quote_volume_24h": volume_24h,
+        "quote_volume_formatted": f"${format_number(volume_24h)}",
+        "market_cap": market_cap,
+        "market_cap_formatted": f"${format_number(market_cap)}",
+        "chain": token_info.get("chainName", ""),
+        "holders": token_info.get("holders", 0),
+        "trend_emoji": "🟢" if price_change_pct > 0 else ("🔴" if price_change_pct < 0 else "⚪"),
+        "note": "数据来自币安Alpha市场"
+    }
+
+
+def get_spot_price(symbol: str, try_alpha: bool = True) -> Dict[str, Any]:
+    """获取现货价格（现货优先，找不到时尝试Alpha市场）"""
     symbol = symbol.upper()
     if not symbol.endswith("USDT"):
         symbol = symbol + "USDT"
@@ -109,6 +259,18 @@ def get_spot_price(symbol: str) -> Dict[str, Any]:
     result = make_spot_request("/ticker/price", {"symbol": symbol})
     
     if not result["success"]:
+        # 如果是HTTP 400错误（交易对不存在），尝试Alpha市场
+        if try_alpha and "400" in str(result.get("error", "")):
+            alpha_result = get_alpha_ticker(symbol)
+            if "error" not in alpha_result:
+                return {
+                    "symbol": symbol,
+                    "market": "Alpha",
+                    "price": alpha_result.get("price", 0),
+                    "price_formatted": alpha_result.get("price_formatted", "N/A"),
+                    "note": "数据来自币安Alpha市场"
+                }
+        
         error_response = {"error": result["error"], "symbol": symbol}
         # 传递网络错误标记
         if result.get("network_error"):
@@ -120,13 +282,14 @@ def get_spot_price(symbol: str) -> Dict[str, Any]:
     data = result["data"]
     return {
         "symbol": data["symbol"],
+        "market": "现货",
         "price": safe_float(data["price"]),
         "price_formatted": f"${safe_float(data['price']):,.4f}"
     }
 
 
-def get_ticker_24h(symbol: str) -> Dict[str, Any]:
-    """获取24小时行情数据"""
+def get_ticker_24h(symbol: str, try_alpha: bool = True) -> Dict[str, Any]:
+    """获取24小时行情数据（现货优先，找不到时尝试Alpha市场）"""
     symbol = symbol.upper()
     if not symbol.endswith("USDT"):
         symbol = symbol + "USDT"
@@ -134,6 +297,12 @@ def get_ticker_24h(symbol: str) -> Dict[str, Any]:
     result = make_spot_request("/ticker/24hr", {"symbol": symbol})
     
     if not result["success"]:
+        # 如果是HTTP 400错误（交易对不存在），尝试Alpha市场
+        if try_alpha and "400" in str(result.get("error", "")):
+            alpha_result = get_alpha_ticker(symbol)
+            if "error" not in alpha_result:
+                return alpha_result
+        
         error_response = {"error": result["error"], "symbol": symbol}
         if result.get("network_error"):
             error_response["network_error"] = True
@@ -146,6 +315,7 @@ def get_ticker_24h(symbol: str) -> Dict[str, Any]:
     
     return {
         "symbol": data["symbol"],
+        "market": "现货",
         "price": safe_float(data["lastPrice"]),
         "price_formatted": f"${safe_float(data['lastPrice']):,.4f}",
         "price_change": safe_float(data["priceChange"]),
@@ -173,8 +343,8 @@ def get_multiple_tickers(symbols: List[str]) -> Dict[str, Any]:
     return results
 
 
-def get_klines(symbol: str, interval: str = "1h", limit: int = 100) -> Dict[str, Any]:
-    """获取K线数据"""
+def get_klines(symbol: str, interval: str = "1h", limit: int = 100, try_alpha: bool = True) -> Dict[str, Any]:
+    """获取K线数据（现货优先，找不到时尝试Alpha市场）"""
     symbol = symbol.upper()
     if not symbol.endswith("USDT"):
         symbol = symbol + "USDT"
@@ -189,6 +359,12 @@ def get_klines(symbol: str, interval: str = "1h", limit: int = 100) -> Dict[str,
     })
     
     if not result["success"]:
+        # 如果是HTTP 400错误（交易对不存在），尝试Alpha市场
+        if try_alpha and "400" in str(result.get("error", "")):
+            alpha_result = get_alpha_klines(symbol, interval, limit)
+            if "error" not in alpha_result:
+                return alpha_result
+        
         error_response = {"error": result["error"], "symbol": symbol}
         if result.get("network_error"):
             error_response["network_error"] = True
@@ -213,10 +389,88 @@ def get_klines(symbol: str, interval: str = "1h", limit: int = 100) -> Dict[str,
     
     return {
         "symbol": symbol,
+        "market": "现货",
         "interval": interval,
         "count": len(klines),
         "klines": klines
     }
+
+
+def get_alpha_klines(symbol: str, interval: str = "1h", limit: int = 100) -> Dict[str, Any]:
+    """获取Alpha代币K线数据"""
+    symbol = symbol.upper()
+    if symbol.endswith("USDT"):
+        symbol = symbol[:-4]  # 去掉USDT后缀
+    
+    # 从代币列表获取alpha_id
+    token_list = get_alpha_token_list()
+    if not token_list.get("success"):
+        return {"error": "无法获取Alpha代币列表", "symbol": symbol}
+    
+    tokens = token_list.get("data", [])
+    
+    # 查找匹配的代币
+    alpha_id = None
+    token_symbol = None
+    for t in tokens:
+        if t.get("symbol", "").upper() == symbol or t.get("name", "").upper() == symbol:
+            alpha_id = t.get("alphaId")
+            token_symbol = t.get("symbol")
+            break
+    
+    if not alpha_id:
+        return {"error": f"未找到Alpha代币: {symbol}", "symbol": symbol}
+    
+    # 构建Alpha K线请求
+    alpha_symbol = f"{alpha_id}USDT"
+    url = f"{ALPHA_BASE_URL}/klines"
+    
+    try:
+        response = requests.get(url, params={
+            "symbol": alpha_symbol,
+            "interval": interval,
+            "limit": min(limit, 1000)
+        }, headers=HEADERS, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get("code") != "000000":
+            return {"error": data.get("message", "获取K线失败"), "symbol": symbol}
+        
+        klines_data = data.get("data", [])
+        klines = []
+        for k in klines_data:
+            # Alpha API返回的时间戳是字符串格式
+            open_time = k[0]
+            if isinstance(open_time, str):
+                open_time = int(open_time)
+            close_time = k[6] if len(k) > 6 else 0
+            if isinstance(close_time, str):
+                close_time = int(close_time)
+            
+            klines.append({
+                "open_time": timestamp_to_datetime(open_time),
+                "open": safe_float(k[1]),
+                "high": safe_float(k[2]),
+                "low": safe_float(k[3]),
+                "close": safe_float(k[4]),
+                "volume": safe_float(k[5]),
+                "close_time": timestamp_to_datetime(close_time) if close_time else "",
+                "quote_volume": safe_float(k[7]) if len(k) > 7 else 0,
+                "trades": int(k[8]) if len(k) > 8 else 0
+            })
+        
+        return {
+            "symbol": f"{token_symbol}USDT",
+            "alpha_id": alpha_id,
+            "market": "Alpha",
+            "interval": interval,
+            "count": len(klines),
+            "klines": klines,
+            "note": "数据来自币安Alpha市场"
+        }
+    except Exception as e:
+        return {"error": str(e), "symbol": symbol}
 
 
 def get_futures_price(symbol: str) -> Dict[str, Any]:
@@ -535,35 +789,73 @@ def analyze_spot_vs_futures(symbol: str) -> Dict[str, Any]:
 
 
 def search_symbols(keyword: str) -> Dict[str, Any]:
-    """搜索交易对"""
+    """搜索交易对（现货 + Alpha代币）"""
+    keyword = keyword.upper()
+    spot_matches = []
+    alpha_matches = []
+    
+    # 1. 搜索现货市场
     result = make_spot_request("/exchangeInfo", {})
     
-    if not result["success"]:
-        error_response = {"error": result["error"]}
-        if result.get("network_error"):
-            error_response["network_error"] = True
-            error_response["stop_execution"] = True
-            error_response["user_action_required"] = result.get("user_action_required", "")
-        return error_response
+    if result["success"]:
+        data = result["data"]
+        for s in data["symbols"]:
+            if s["status"] == "TRADING" and s["quoteAsset"] == "USDT":
+                if keyword in s["baseAsset"] or keyword in s["symbol"]:
+                    spot_matches.append({
+                        "symbol": s["symbol"],
+                        "base_asset": s["baseAsset"],
+                        "quote_asset": s["quoteAsset"],
+                        "market": "现货"
+                    })
     
-    data = result["data"]
-    keyword = keyword.upper()
-    matches = []
+    # 2. 如果现货没找到，搜索Alpha代币
+    if len(spot_matches) == 0:
+        alpha_matches = search_alpha_tokens(keyword)
     
-    for s in data["symbols"]:
-        if s["status"] == "TRADING" and s["quoteAsset"] == "USDT":
-            if keyword in s["baseAsset"] or keyword in s["symbol"]:
-                matches.append({
-                    "symbol": s["symbol"],
-                    "base_asset": s["baseAsset"],
-                    "quote_asset": s["quoteAsset"]
-                })
+    # 合并结果
+    all_matches = spot_matches[:20] + alpha_matches[:10]
     
     return {
         "keyword": keyword,
-        "count": len(matches),
-        "symbols": matches[:20]
+        "count": len(all_matches),
+        "spot_count": len(spot_matches),
+        "alpha_count": len(alpha_matches),
+        "symbols": all_matches,
+        "note": "现货未找到时自动搜索Alpha代币" if alpha_matches else None
     }
+
+
+def search_alpha_tokens(keyword: str) -> List[Dict[str, Any]]:
+    """搜索Alpha代币（从币安Alpha代币列表API）"""
+    keyword = keyword.upper()
+    matches = []
+    
+    # 从币安Alpha代币列表API获取
+    try:
+        token_list = get_alpha_token_list()
+        if token_list.get("success"):
+            tokens = token_list.get("data", [])
+            for t in tokens:
+                symbol = t.get("symbol", "").upper()
+                name = t.get("name", "").upper()
+                if keyword in symbol or keyword in name:
+                    matches.append({
+                        "symbol": f"{t.get('symbol')}USDT",
+                        "base_asset": t.get("symbol"),
+                        "quote_asset": "USDT",
+                        "market": "Alpha",
+                        "name": t.get("name"),
+                        "alpha_id": t.get("alphaId"),
+                        "chain": t.get("chainName"),
+                        "price": f"${safe_float(t.get('price', 0)):,.6f}",
+                        "change_24h": f"{safe_float(t.get('percentChange24h', 0)):+.2f}%",
+                        "note": "币安Alpha代币"
+                    })
+    except Exception as e:
+        pass
+    
+    return matches
 
 
 def get_top_gainers_losers(limit: int = 10) -> Dict[str, Any]:
