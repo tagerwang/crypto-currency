@@ -1,0 +1,46 @@
+{
+  "mcpServers": {
+    "binance-remote": {
+      "type": "http",
+      "url": "http://YOUR_SERVER_IP",
+      "description": "Binance API - 远程服务器",
+      "autoApprove": [
+        "get_extreme_funding_rates",
+        "comprehensive_analysis",
+        "get_klines",
+        "analyze_kline_patterns",
+        "get_ticker_24h",
+        "get_realtime_funding_rate",
+        "search_symbols",
+        "get_futures_price",
+        "get_funding_rate",
+        "analyze_spot_vs_futures",
+        "get_alpha_tokens_list",
+        "analyze_market_factors",
+        "get_top_gainers_losers",
+        "get_spot_price",
+        "get_multiple_tickers",
+        "analyze_alpha_token",
+        "get_active_alpha_competitions",
+        "get_realtime_alpha_airdrops",
+        "add_alpha_competition",
+        "analyze_market_factors"
+      ]
+    },
+    "coingecko-remote": {
+      "type": "http",
+      "url": "http://YOUR_SERVER_IP",
+      "description": "CoinGecko API - 远程服务器",
+      "autoApprove": [
+        "get_trending",
+        "search_coins",
+        "get_coin_data",
+        "get_price"
+      ]
+    },
+    "crypto-com": {
+      "type": "http",
+      "url": "https://mcp.crypto.com/market-data/mcp"
+    }
+  }
+}

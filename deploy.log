@@ -1,0 +1,88 @@
+=== 开始部署到服务器 YOUR_SERVER_IP ===
+
+📦 步骤 1/3: 上传文件...
+rsync(79626): warning: test_funding_rate.py: skipping excluded file
+Transfer starting: 27 files
+requirements.txt
+             59 100%   71.58KB/s   00:00:00 (xfer#1, to-check=12/27)
+
+sent 1336 bytes  received 54 bytes  1855 bytes/sec
+total size is 282703  speedup is 203.38
+✅ 文件上传成功
+
+🚀 步骤 2/3: 在服务器上执行部署...
+==========================================
+  MCP Crypto API 一键部署
+==========================================
+
+📦 步骤 1/8: 更新系统...
+
+WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+
+34 packages can be upgraded. Run 'apt list --upgradable' to see them.
+🐍 步骤 2/8: 安装 Python 和工具...
+📁 步骤 3/8: 准备项目目录...
+🔧 步骤 4/8: 创建虚拟环境...
+📚 步骤 5/8: 安装依赖...
+⚙️  步骤 6/8: 配置进程管理...
+🌐 步骤 7/8: 配置 Nginx...
+🔥 步骤 8/8: 配置防火墙...
+🚀 启动服务...
+
+==========================================
+  ✅ 部署完成！
+==========================================
+
+📊 服务状态：
+mcp-crypto-api                   RUNNING   pid 3899, uptime 0:00:04
+
+🌍 访问地址：
+   http://YOUR_SERVER_IP/
+   http://YOUR_SERVER_IP/health
+
+🧪 测试命令：
+   curl http://YOUR_SERVER_IP/health
+   curl http://YOUR_SERVER_IP/binance/spot/price?symbol=BTC
+
+📝 查看日志：
+   sudo tail -f /var/log/mcp-crypto-api.out.log
+
+🔧 管理命令：
+   sudo supervisorctl status mcp-crypto-api    # 查看状态
+   sudo supervisorctl restart mcp-crypto-api   # 重启服务
+
+🧪 自动测试 API...
+   ✅ API 运行正常！
+
+==========================================
+✅ 部署成功
+
+🧪 步骤 3/3: 测试 API...
+测试健康检查...
+{
+    "service": "MCP Crypto API",
+    "status": "ok"
+}
+
+测试 BTC 价格...
+{
+    "market": "\u73b0\u8d27",
+    "price": 92731.52,
+    "price_formatted": "$92,731.5200",
+    "symbol": "BTCUSDT"
+}
+
+===================================
+✅ 部署完成！
+===================================
+
+API 地址：
+  http://YOUR_SERVER_IP/
+  http://YOUR_SERVER_IP/health
+  http://YOUR_SERVER_IP/binance/spot/price?symbol=BTC
+
+管理命令：
+  查看日志: ssh root@YOUR_SERVER_IP 'tail -f /var/log/mcp-crypto-api.out.log'
+  查看状态: ssh root@YOUR_SERVER_IP 'supervisorctl status'
+  重启服务: ssh root@YOUR_SERVER_IP 'supervisorctl restart mcp-crypto-api'
+
