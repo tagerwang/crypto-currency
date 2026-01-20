@@ -36,7 +36,7 @@
 cd ~/exercise/crypto-currency-main
 
 # 使用 Claude 帮你修改代码
-# 例如："帮我优化 binance_mcp.py 的错误处理"
+# 例如："帮我优化 binance_mcp 模块的错误处理"
 # 或者："添加一个新的 API 端点获取交易量排行"
 ```
 

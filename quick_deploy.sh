@@ -40,7 +40,7 @@ echo "⚙️  步骤 6/8: 配置进程管理..."
 cat > /etc/supervisor/conf.d/mcp-crypto-api.conf <<EOF
 [program:mcp-crypto-api]
 directory=$PROJECT_DIR
-command=$PROJECT_DIR/venv/bin/python mcp_http_server.py
+command=$PROJECT_DIR/venv/bin/python unified_server.py
 user=root
 autostart=true
 autorestart=true

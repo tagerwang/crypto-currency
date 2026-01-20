@@ -2,36 +2,34 @@
   "mcpServers": {
     "binance-remote": {
       "type": "http",
-      "url": "https://YOUR_SERVER_IP/mcp",
-      "description": "Binance API - 远程服务器（HTTPS）",
-      "allowInsecure": true,
+      "url": "http://localhost:8080/mcp",
+      "description": "Binance API - 通过SSH隧道连接远程服务器",
       "autoApprove": [
         "get_spot_price",
         "get_ticker_24h",
+        "get_multiple_tickers",
         "get_klines",
         "comprehensive_analysis",
         "analyze_kline_patterns",
+        "analyze_market_factors",
         "get_futures_price",
         "get_funding_rate",
         "get_realtime_funding_rate",
         "get_extreme_funding_rates",
         "analyze_spot_vs_futures",
+        "get_realtime_alpha_airdrops",
         "get_alpha_tokens_list",
         "analyze_alpha_token",
         "get_active_alpha_competitions",
-        "get_realtime_alpha_airdrops",
-        "search_symbols",
-        "get_top_gainers_losers",
-        "analyze_market_factors",
         "add_alpha_competition",
-        "get_multiple_tickers"
+        "search_symbols",
+        "get_top_gainers_losers"
       ]
     },
     "coingecko-remote": {
       "type": "http",
-      "url": "https://YOUR_SERVER_IP/mcp-coingecko",
-      "description": "CoinGecko API - 远程服务器（HTTPS）",
-      "allowInsecure": true,
+      "url": "http://localhost:8080/mcp-coingecko",
+      "description": "CoinGecko API - 通过SSH隧道连接远程服务器",
       "autoApprove": [
         "get_price",
         "get_coin_data",

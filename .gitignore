@@ -1,32 +1,27 @@
+# 临时文件
+*.log
+*.tmp
+deploy.log
+
+# 本地配置
+.env
+
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-venv/
-env/
-ENV/
+*.pyc
+*.pyo
+*.pyd
+
+# 备份文件
+*.bak
+*~
 
 # IDE
 .vscode/
 .idea/
-.kiro/
 *.swp
 *.swo
-*~
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-deploy.log
-
-# Environment variables
-.env
-.env.local
-
-# Sensitive data
-mcp.json
+# 测试
+test_*.py
+*_test.py

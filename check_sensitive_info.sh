@@ -1,32 +1,60 @@
 #!/bin/bash
-echo "🔍 检查项目中的敏感信息..."
+# 检查敏感信息脚本 - 确保没有硬编码的 IP 和域名
+
+echo "=========================================="
+echo "  检查敏感信息"
+echo "=========================================="
 echo ""
 
-# 检查配置文件中的占位符
-echo "检查配置文件是否使用了占位符..."
-config_files=("deploy_simple.sh" "server_manager.sh" "mcp_config_remote.json")
+# 定义要检查的敏感信息模式
+PATTERNS=(
+    "45\.32\.114\.70"
+    "tager\.duckdns\.org"
+)
 
-found_issues=0
+FOUND=0
 
-for file in "${config_files[@]}"; do
-    if [ -f "$file" ]; then
-        if ! grep -q "YOUR_SERVER_IP" "$file"; then
-            echo "⚠️  $file 可能包含真实服务器信息（未找到占位符）"
-            found_issues=1
-        else
-            echo "✅ $file 使用了占位符"
-        fi
+echo "🔍 扫描文件中的敏感信息..."
+echo ""
+
+for pattern in "${PATTERNS[@]}"; do
+    echo "检查模式: $pattern"
+    
+    # 排除特定文件和目录
+    results=$(grep -r "$pattern" . \
+        --exclude-dir=".git" \
+        --exclude-dir="__pycache__" \
+        --exclude-dir=".kiro" \
+        --exclude-dir="venv" \
+        --exclude="*.log" \
+        --exclude="check_sensitive_info.sh" \
+        --exclude=".env" \
+        --exclude=".env.example" \
+        2>/dev/null || true)
+    
+    if [ -n "$results" ]; then
+        echo "❌ 发现敏感信息:"
+        echo "$results"
+        echo ""
+        FOUND=1
+    else
+        echo "✅ 未发现"
+        echo ""
     fi
 done
 
-echo ""
-echo "================================"
-if [ $found_issues -eq 0 ]; then
-    echo "✅ 配置文件已正确使用占位符"
-    echo "================================"
-    exit 0
+echo "=========================================="
+if [ $FOUND -eq 0 ]; then
+    echo "  ✅ 检查通过！未发现敏感信息"
 else
-    echo "⚠️  发现潜在的敏感信息"
-    echo "================================"
-    exit 1
+    echo "  ⚠️  发现敏感信息，请检查上述文件"
+    echo ""
+    echo "提示："
+    echo "1. 将敏感信息移至 .env 文件"
+    echo "2. 在脚本中使用环境变量"
+    echo "3. 确保 .env 已添加到 .gitignore"
 fi
+echo "=========================================="
+echo ""
+
+exit $FOUND

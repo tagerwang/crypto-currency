@@ -1,10 +1,21 @@
 #!/bin/bash
 # 服务器管理脚本 - 在本地 Kiro 终端中使用
 
-# 配置你的服务器信息
-SERVER_IP="YOUR_SERVER_IP"  # 替换为你的服务器IP
-SERVER_USER="root"
-PROJECT_DIR="/opt/mcp-crypto-api"
+# 加载环境变量
+if [ -f .env ]; then
+    export $(cat .env | grep -v '^#' | xargs)
+else
+    echo "❌ 错误: .env 文件不存在"
+    echo "请复制 .env.example 为 .env 并填入真实值"
+    exit 1
+fi
+
+# 检查必需的环境变量
+if [ -z "$SERVER_IP" ] || [ -z "$SERVER_USER" ] || [ -z "$PROJECT_DIR" ]; then
+    echo "❌ 错误: 缺少必需的环境变量"
+    echo "请在 .env 文件中设置 SERVER_IP, SERVER_USER 和 PROJECT_DIR"
+    exit 1
+fi
 
 # 颜色输出
 GREEN='\033[0;32m'

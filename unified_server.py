@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
 """
-MCP HTTP Server - 将 MCP 服务暴露为 HTTP API
+统一服务器 - 同时支持REST API和MCP协议
+- REST API: http://server/binance/spot/price?symbol=BTC
+- MCP协议: http://server/mcp (POST JSON-RPC 2.0)
 """
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import json
 import sys
 import os
 
-# 添加当前目录到 Python 路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 app = Flask(__name__)
-CORS(app)  # 允许跨域访问
+CORS(app)
 
-# 导入 MCP 服务的功能（使用模块化包）
+# 导入MCP服务器处理函数
+from binance_mcp.server import handle_mcp_request
+
+# 导入业务逻辑
 from binance_mcp.api import (
     get_spot_price, get_ticker_24h, get_klines,
     get_futures_price, get_funding_rate, get_realtime_funding_rate,
@@ -27,15 +32,54 @@ from binance_mcp.alpha import (
     get_alpha_tokens_list, analyze_alpha_token, get_active_alpha_competitions
 )
 from binance_mcp.alpha_realtime import get_realtime_alpha_airdrops
-
 from coingecko_mcp import get_price, get_coin_data, search_coins, get_trending
 
+# ============ MCP 协议端点 ============
+@app.route('/mcp', methods=['POST'])
+def mcp_endpoint():
+    """MCP协议端点 - Binance工具"""
+    try:
+        mcp_request = request.get_json()
+        response = handle_mcp_request(mcp_request)
+        if response:
+            return jsonify(response)
+        return '', 204
+    except Exception as e:
+        return jsonify({
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {"code": -32603, "message": str(e)}
+        }), 500
+
+@app.route('/mcp-coingecko', methods=['POST'])
+def mcp_coingecko_endpoint():
+    """MCP协议端点 - CoinGecko工具"""
+    try:
+        from coingecko_mcp import handle_mcp_request as handle_coingecko_request
+        mcp_request = request.get_json()
+        response = handle_coingecko_request(mcp_request)
+        if response:
+            return jsonify(response)
+        return '', 204
+    except Exception as e:
+        return jsonify({
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {"code": -32603, "message": str(e)}
+        }), 500
+
+# ============ 健康检查 ============
 @app.route('/health', methods=['GET'])
 def health_check():
     """健康检查"""
-    return jsonify({"status": "ok", "service": "MCP Crypto API"})
+    return jsonify({
+        "status": "ok",
+        "service": "Unified Crypto API Server",
+        "protocols": ["REST", "MCP"],
+        "mcp_endpoint": "/mcp"
+    })
 
-# ============ Binance API ============
+# ============ REST API - Binance ============
 @app.route('/binance/spot/price', methods=['GET'])
 def binance_spot_price():
     symbol = request.args.get('symbol', 'BTC')
@@ -141,7 +185,7 @@ def binance_market_factors():
     result = analyze_market_factors(symbol)
     return jsonify(result)
 
-# ============ CoinGecko API ============
+# ============ REST API - CoinGecko ============
 @app.route('/coingecko/price', methods=['GET'])
 def coingecko_price():
     coin_ids = request.args.get('coin_ids', 'bitcoin')
@@ -170,9 +214,16 @@ def coingecko_trending():
 def api_docs():
     """API 文档"""
     return jsonify({
-        "service": "MCP Crypto API Server",
-        "version": "1.0.0",
-        "endpoints": {
+        "service": "Unified Crypto API Server",
+        "version": "2.0.0",
+        "protocols": {
+            "REST": "HTTP GET/POST",
+            "MCP": {
+                "binance": "JSON-RPC 2.0 at POST /mcp",
+                "coingecko": "JSON-RPC 2.0 at POST /mcp-coingecko"
+            }
+        },
+        "rest_endpoints": {
             "health": "GET /health",
             "binance": {
                 "spot_price": "GET /binance/spot/price?symbol=BTC",
@@ -199,9 +250,22 @@ def api_docs():
                 "search": "GET /coingecko/search?query=bitcoin",
                 "trending": "GET /coingecko/trending"
             }
+        },
+        "mcp_usage": {
+            "binance_endpoint": "POST /mcp",
+            "coingecko_endpoint": "POST /mcp-coingecko",
+            "example": {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_spot_price",
+                    "arguments": {"symbol": "BTC"}
+                }
+            }
         }
     })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
