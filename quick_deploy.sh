@@ -50,10 +50,29 @@ environment=PORT=8080
 EOF
 
 echo "🌐 步骤 7/8: 配置 Nginx..."
-cat > /etc/nginx/sites-available/mcp-crypto-api <<EOF
+
+# 加载环境变量
+if [ -f .env ]; then
+    export $(cat .env | grep -v '^#' | xargs)
+fi
+
+# 检查是否已有 SSL 配置
+if [ -f /etc/nginx/sites-available/mcp-crypto-api ] && grep -q "listen 443 ssl" /etc/nginx/sites-available/mcp-crypto-api; then
+    echo "   ℹ️  检测到已有 SSL 配置，保持不变"
+else
+    # 如果有域名变量，使用域名；否则使用通配符
+    if [ -n "$DOMAIN" ]; then
+        SERVER_NAME="$DOMAIN"
+        echo "   ℹ️  使用域名: $DOMAIN"
+    else
+        SERVER_NAME="_"
+        echo "   ℹ️  使用通配符配置"
+    fi
+    
+    cat > /etc/nginx/sites-available/mcp-crypto-api <<EOF
 server {
     listen 80;
-    server_name _;
+    server_name $SERVER_NAME;
 
     location / {
         proxy_pass http://127.0.0.1:8080;
@@ -67,6 +86,8 @@ server {
     }
 }
 EOF
+    echo "   ✅ 创建了新的 Nginx 配置"
+fi
 
 ln -sf /etc/nginx/sites-available/mcp-crypto-api /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default
