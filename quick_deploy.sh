@@ -15,9 +15,9 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# 获取当前目录
-CURRENT_DIR=$(pwd)
-PROJECT_DIR="/opt/mcp-crypto-api"
+# 使用执行脚本时所在目录为项目目录（与 deploy_simple.sh 的 rsync 目标一致）
+PROJECT_DIR=$(pwd)
+CURRENT_DIR="$PROJECT_DIR"
 
 echo "📦 步骤 1/8: 更新系统..."
 apt update -qq
@@ -98,10 +98,10 @@ ufw allow 22/tcp > /dev/null 2>&1
 ufw allow 80/tcp > /dev/null 2>&1
 ufw allow 443/tcp > /dev/null 2>&1
 
-echo "🚀 启动服务..."
+echo "🚀 重启服务（确保加载最新代码）..."
 supervisorctl reread > /dev/null 2>&1
 supervisorctl update > /dev/null 2>&1
-supervisorctl start mcp-crypto-api > /dev/null 2>&1
+supervisorctl restart mcp-crypto-api > /dev/null 2>&1
 nginx -t > /dev/null 2>&1 && systemctl restart nginx
 
 # 等待服务启动

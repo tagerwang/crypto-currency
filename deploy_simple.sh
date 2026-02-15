@@ -16,6 +16,7 @@ if [ -z "$SERVER_IP" ] || [ -z "$SERVER_USER" ] || [ -z "$PROJECT_DIR" ]; then
     echo "请在 .env 文件中设置 SERVER_IP, SERVER_USER 和 PROJECT_DIR"
     exit 1
 fi
+# PROJECT_DIR 为服务器上的项目路径，quick_deploy.sh 会在此目录启动服务，请与 .env 中一致（如 /opt/mcp-crypto-api）
 
 echo "=== 开始部署到服务器 $SERVER_IP ==="
 echo ""

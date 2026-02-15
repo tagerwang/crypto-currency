@@ -7,8 +7,9 @@ import requests
 from typing import Dict, List, Any
 from datetime import datetime
 
-from .config import SPOT_BASE_URLS, FUTURES_BASE_URLS, HEADERS, KLINE_INTERVALS, ALPHA_BASE_URL
+from .config import SPOT_BASE_URLS, FUTURES_BASE_URLS, FUTURES_DATA_BASE_URLS, HEADERS, KLINE_INTERVALS, ALPHA_BASE_URL
 from .utils import format_number, timestamp_to_datetime, safe_float
+from .request_pool import fetch_spot_with_dedup, fetch_futures_with_dedup, fetch_futures_data_with_dedup
 
 
 # Alpha代币符号缓存
@@ -18,11 +19,11 @@ _alpha_token_list_cache = None
 _alpha_token_list_cache_time = None
 
 
-def make_spot_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
-    """发起现货API请求，自动尝试备用域名"""
+def _do_spot_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
+    """实际发起现货API请求（供 request_pool 合并/缓存后调用）"""
     last_error = None
     is_network_error = False
-    
+
     for base_url in SPOT_BASE_URLS:
         url = f"{base_url}{endpoint}"
         try:
@@ -63,19 +64,23 @@ def make_spot_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
     }
 
 
-def make_futures_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
-    """发起合约API请求，自动尝试备用域名"""
+def make_spot_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
+    """发起现货API请求，自动尝试备用域名；经请求合并与缓存，多用户同机访问时减少对币安API调用"""
+    return fetch_spot_with_dedup(endpoint, params, lambda: _do_spot_request(endpoint, params))
+
+
+def _do_futures_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
+    """实际发起合约API请求（供 request_pool 合并/缓存后调用）"""
     last_error = None
     is_network_error = False
-    
+
     for base_url in FUTURES_BASE_URLS:
         url = f"{base_url}{endpoint}"
         try:
             response = requests.get(url, params=params, headers=HEADERS, timeout=10)
-            
+
             if response.status_code == 451:
                 continue
-            
             response.raise_for_status()
             return {"success": True, "data": response.json()}
         except requests.exceptions.HTTPError as e:
@@ -96,15 +101,68 @@ def make_futures_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
             last_error = str(e)
             is_network_error = True
             continue
-    
+
     error_msg = last_error or "所有API端点均不可用"
     return {
-        "success": False, 
+        "success": False,
         "error": error_msg,
         "network_error": True,
         "stop_execution": True,
         "user_action_required": "⚠️ 检测到网络问题，请先确保VPN/代理正常连接后再重试。当前无法获取准确数据。"
     }
+
+
+def make_futures_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
+    """发起合约API请求，自动尝试备用域名；经请求合并与缓存，多用户同机访问时减少对币安API调用"""
+    return fetch_futures_with_dedup(endpoint, params, lambda: _do_futures_request(endpoint, params))
+
+
+def _do_futures_data_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
+    """实际发起合约数据API请求（供 request_pool 合并/缓存后调用）"""
+    last_error = None
+    is_network_error = False
+
+    for base_url in FUTURES_DATA_BASE_URLS:
+        url = f"{base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+        try:
+            response = requests.get(url, params=params, headers=HEADERS, timeout=10)
+
+            if response.status_code == 451:
+                continue
+            response.raise_for_status()
+            return {"success": True, "data": response.json()}
+        except requests.exceptions.HTTPError as e:
+            if response.status_code == 451:
+                last_error = "API访问受地区限制，请使用VPN或代理"
+                is_network_error = True
+                continue
+            last_error = f"HTTP错误: {response.status_code}"
+        except requests.exceptions.ConnectionError as e:
+            last_error = "网络连接失败，请检查网络或代理设置"
+            is_network_error = True
+            continue
+        except requests.exceptions.Timeout as e:
+            last_error = "请求超时，请检查网络连接"
+            is_network_error = True
+            continue
+        except requests.exceptions.RequestException as e:
+            last_error = str(e)
+            is_network_error = True
+            continue
+
+    error_msg = last_error or "所有API端点均不可用"
+    return {
+        "success": False,
+        "error": error_msg,
+        "network_error": True,
+        "stop_execution": True,
+        "user_action_required": "⚠️ 检测到网络问题，请先确保VPN/代理正常连接后再重试。当前无法获取准确数据。"
+    }
+
+
+def make_futures_data_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
+    """发起合约数据API请求（/futures/data/* 持仓量、多空比等）；经请求合并与缓存，多用户同机访问时减少对币安API调用"""
+    return fetch_futures_data_with_dedup(endpoint, params, lambda: _do_futures_data_request(endpoint, params))
 
 
 def make_alpha_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
@@ -601,6 +659,15 @@ def get_futures_klines(symbol: str, interval: str = "1h", limit: int = 100) -> D
     }
 
 
+def get_futures_multiple_tickers(symbols: List[str]) -> Dict[str, Any]:
+    """批量获取多个合约的24小时行情"""
+    results = {}
+    for symbol in symbols:
+        ticker = get_futures_ticker_24h(symbol)
+        results[symbol.upper()] = ticker
+    return results
+
+
 def get_funding_rate(symbol: str) -> Dict[str, Any]:
     """获取历史结算资金费率（最新已结算费率 + 历史记录）"""
     symbol = symbol.upper()
@@ -847,10 +914,317 @@ def get_extreme_funding_rates(threshold: float = 0.1, limit: int = 20) -> Dict[s
             "contracts": extreme_negative[:limit]
         },
         "extreme_positive": {
-            "description": "极端正费率（多头付费，做空有利）", 
+            "description": "极端正费率（多头付费，做空有利）",
             "count": len(extreme_positive),
             "contracts": extreme_positive[:limit]
         }
+    }
+
+
+def get_mark_price(symbol: str) -> Dict[str, Any]:
+    """获取合约标记价格、指数价格、资金费率及下次结算时间"""
+    symbol = symbol.upper()
+    if not symbol.endswith("USDT"):
+        symbol = symbol + "USDT"
+
+    result = make_futures_request("/premiumIndex", {"symbol": symbol})
+
+    if not result["success"]:
+        error_response = {"error": result["error"], "symbol": symbol}
+        if result.get("network_error"):
+            error_response["network_error"] = True
+            error_response["stop_execution"] = True
+            error_response["user_action_required"] = result.get("user_action_required", "")
+        return error_response
+
+    data = result["data"]
+    mark_price = safe_float(data.get("markPrice", 0))
+    index_price = safe_float(data.get("indexPrice", 0))
+    last_funding_rate = safe_float(data.get("lastFundingRate", 0)) * 100
+    next_funding_time = data.get("nextFundingTime", 0)
+    estimated_settle = data.get("estimatedSettlePrice", 0)
+
+    now_ts = datetime.now().timestamp() * 1000
+    countdown_ms = next_funding_time - now_ts
+    if countdown_ms > 0:
+        countdown_seconds = int(countdown_ms / 1000)
+        hours = countdown_seconds // 3600
+        minutes = (countdown_seconds % 3600) // 60
+        countdown_str = f"{hours:02d}:{minutes:02d}"
+    else:
+        countdown_str = "结算中"
+
+    return {
+        "symbol": symbol,
+        "market": "合约",
+        "mark_price": mark_price,
+        "mark_price_formatted": f"${mark_price:,.4f}",
+        "index_price": index_price,
+        "index_price_formatted": f"${index_price:,.4f}",
+        "last_funding_rate": f"{last_funding_rate:+.4f}%",
+        "next_funding_time": timestamp_to_datetime(next_funding_time) if next_funding_time else "N/A",
+        "countdown_to_settlement": countdown_str,
+        "estimated_settle_price": f"${safe_float(estimated_settle):,.4f}" if estimated_settle else "N/A",
+    }
+
+
+def get_open_interest(symbol: str) -> Dict[str, Any]:
+    """获取合约当前持仓量"""
+    symbol = symbol.upper()
+    if not symbol.endswith("USDT"):
+        symbol = symbol + "USDT"
+
+    result = make_futures_request("/openInterest", {"symbol": symbol})
+
+    if not result["success"]:
+        error_response = {"error": result["error"], "symbol": symbol}
+        if result.get("network_error"):
+            error_response["network_error"] = True
+            error_response["stop_execution"] = True
+            error_response["user_action_required"] = result.get("user_action_required", "")
+        return error_response
+
+    data = result["data"]
+    open_interest = safe_float(data.get("openInterest", 0))
+    timestamp = data.get("time", 0)
+
+    return {
+        "symbol": symbol,
+        "market": "合约",
+        "open_interest": open_interest,
+        "open_interest_formatted": format_number(open_interest),
+        "timestamp": timestamp_to_datetime(timestamp) if timestamp else "N/A",
+    }
+
+
+def get_open_interest_hist(symbol: str, period: str = "1h", limit: int = 30) -> Dict[str, Any]:
+    """获取合约持仓量历史"""
+    symbol = symbol.upper()
+    if not symbol.endswith("USDT"):
+        symbol = symbol + "USDT"
+
+    valid_periods = ["5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d"]
+    if period not in valid_periods:
+        return {"error": f"不支持的周期: {period}，支持: {valid_periods}"}
+
+    result = make_futures_data_request("openInterestHist", {
+        "symbol": symbol,
+        "period": period,
+        "limit": min(limit, 500),
+    })
+
+    if not result["success"]:
+        error_response = {"error": result["error"], "symbol": symbol}
+        if result.get("network_error"):
+            error_response["network_error"] = True
+            error_response["stop_execution"] = True
+            error_response["user_action_required"] = result.get("user_action_required", "")
+        return error_response
+
+    data = result["data"]
+    history = [
+        {
+            "timestamp": timestamp_to_datetime(d["timestamp"]) if d.get("timestamp") else "N/A",
+            "open_interest": safe_float(d.get("sumOpenInterest", 0)),
+            "open_interest_value": safe_float(d.get("sumOpenInterestValue", 0)),
+        }
+        for d in data
+    ]
+
+    return {
+        "symbol": symbol,
+        "market": "合约",
+        "period": period,
+        "count": len(history),
+        "history": history,
+    }
+
+
+def get_top_long_short_ratio(symbol: str, period: str = "1h", limit: int = 30) -> Dict[str, Any]:
+    """获取大户账户多空比（top 20% 用户）"""
+    symbol = symbol.upper()
+    if not symbol.endswith("USDT"):
+        symbol = symbol + "USDT"
+
+    valid_periods = ["5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d"]
+    if period not in valid_periods:
+        return {"error": f"不支持的周期: {period}，支持: {valid_periods}"}
+
+    result = make_futures_data_request("topLongShortAccountRatio", {
+        "symbol": symbol,
+        "period": period,
+        "limit": min(limit, 500),
+    })
+
+    if not result["success"]:
+        error_response = {"error": result["error"], "symbol": symbol}
+        if result.get("network_error"):
+            error_response["network_error"] = True
+            error_response["stop_execution"] = True
+            error_response["user_action_required"] = result.get("user_action_required", "")
+        return error_response
+
+    data = result["data"]
+    history = [
+        {
+            "timestamp": timestamp_to_datetime(d["timestamp"]) if d.get("timestamp") else "N/A",
+            "long_short_ratio": safe_float(d.get("longShortRatio", 0)),
+            "long_account": f"{safe_float(d.get('longAccount', 0)) * 100:.2f}%",
+            "short_account": f"{safe_float(d.get('shortAccount', 0)) * 100:.2f}%",
+        }
+        for d in data
+    ]
+
+    latest = history[0] if history else {}
+    return {
+        "symbol": symbol,
+        "market": "合约",
+        "period": period,
+        "description": "大户账户多空比（持仓量前20%用户）",
+        "latest_ratio": latest.get("long_short_ratio", 0),
+        "count": len(history),
+        "history": history,
+    }
+
+
+def get_top_long_short_position_ratio(symbol: str, period: str = "1h", limit: int = 30) -> Dict[str, Any]:
+    """获取大户持仓多空比"""
+    symbol = symbol.upper()
+    if not symbol.endswith("USDT"):
+        symbol = symbol + "USDT"
+
+    valid_periods = ["5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d"]
+    if period not in valid_periods:
+        return {"error": f"不支持的周期: {period}，支持: {valid_periods}"}
+
+    result = make_futures_data_request("topLongShortPositionRatio", {
+        "symbol": symbol,
+        "period": period,
+        "limit": min(limit, 500),
+    })
+
+    if not result["success"]:
+        error_response = {"error": result["error"], "symbol": symbol}
+        if result.get("network_error"):
+            error_response["network_error"] = True
+            error_response["stop_execution"] = True
+            error_response["user_action_required"] = result.get("user_action_required", "")
+        return error_response
+
+    data = result["data"]
+    history = [
+        {
+            "timestamp": timestamp_to_datetime(d["timestamp"]) if d.get("timestamp") else "N/A",
+            "long_short_ratio": safe_float(d.get("longShortRatio", 0)),
+            "long_position": f"{safe_float(d.get('longPosition', 0)) * 100:.2f}%",
+            "short_position": f"{safe_float(d.get('shortPosition', 0)) * 100:.2f}%",
+        }
+        for d in data
+    ]
+
+    latest = history[0] if history else {}
+    return {
+        "symbol": symbol,
+        "market": "合约",
+        "period": period,
+        "description": "大户持仓多空比",
+        "latest_ratio": latest.get("long_short_ratio", 0),
+        "count": len(history),
+        "history": history,
+    }
+
+
+def get_global_long_short_ratio(symbol: str, period: str = "1h", limit: int = 30) -> Dict[str, Any]:
+    """获取全市场多空比"""
+    symbol = symbol.upper()
+    if not symbol.endswith("USDT"):
+        symbol = symbol + "USDT"
+
+    valid_periods = ["5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d"]
+    if period not in valid_periods:
+        return {"error": f"不支持的周期: {period}，支持: {valid_periods}"}
+
+    result = make_futures_data_request("globalLongShortAccountRatio", {
+        "symbol": symbol,
+        "period": period,
+        "limit": min(limit, 500),
+    })
+
+    if not result["success"]:
+        error_response = {"error": result["error"], "symbol": symbol}
+        if result.get("network_error"):
+            error_response["network_error"] = True
+            error_response["stop_execution"] = True
+            error_response["user_action_required"] = result.get("user_action_required", "")
+        return error_response
+
+    data = result["data"]
+    history = [
+        {
+            "timestamp": timestamp_to_datetime(d["timestamp"]) if d.get("timestamp") else "N/A",
+            "long_short_ratio": safe_float(d.get("longShortRatio", 0)),
+            "long_account": f"{safe_float(d.get('longAccount', 0)) * 100:.2f}%",
+            "short_account": f"{safe_float(d.get('shortAccount', 0)) * 100:.2f}%",
+        }
+        for d in data
+    ]
+
+    latest = history[0] if history else {}
+    return {
+        "symbol": symbol,
+        "market": "合约",
+        "period": period,
+        "description": "全市场账户多空比",
+        "latest_ratio": latest.get("long_short_ratio", 0),
+        "count": len(history),
+        "history": history,
+    }
+
+
+def get_taker_buy_sell_ratio(symbol: str, period: str = "1h", limit: int = 30) -> Dict[str, Any]:
+    """获取主动买卖比（taker long/short ratio）"""
+    symbol = symbol.upper()
+    if not symbol.endswith("USDT"):
+        symbol = symbol + "USDT"
+
+    valid_periods = ["5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d"]
+    if period not in valid_periods:
+        return {"error": f"不支持的周期: {period}，支持: {valid_periods}"}
+
+    result = make_futures_data_request("takerlongshortRatio", {
+        "symbol": symbol,
+        "period": period,
+        "limit": min(limit, 500),
+    })
+
+    if not result["success"]:
+        error_response = {"error": result["error"], "symbol": symbol}
+        if result.get("network_error"):
+            error_response["network_error"] = True
+            error_response["stop_execution"] = True
+            error_response["user_action_required"] = result.get("user_action_required", "")
+        return error_response
+
+    data = result["data"]
+    history = [
+        {
+            "timestamp": timestamp_to_datetime(d["timestamp"]) if d.get("timestamp") else "N/A",
+            "buy_sell_ratio": safe_float(d.get("buySellRatio", 0)),
+            "buy_vol": safe_float(d.get("buyVol", 0)),
+            "sell_vol": safe_float(d.get("sellVol", 0)),
+        }
+        for d in data
+    ]
+
+    latest = history[0] if history else {}
+    return {
+        "symbol": symbol,
+        "market": "合约",
+        "period": period,
+        "description": "主动买卖比（taker主动成交）",
+        "latest_ratio": latest.get("buy_sell_ratio", 0),
+        "count": len(history),
+        "history": history,
     }
 
 
@@ -929,6 +1303,38 @@ def search_symbols(keyword: str) -> Dict[str, Any]:
     }
 
 
+def search_futures_symbols(keyword: str) -> Dict[str, Any]:
+    """搜索合约交易对"""
+    keyword = keyword.upper()
+    result = make_futures_request("/exchangeInfo", {})
+
+    if not result["success"]:
+        error_response = {"error": result["error"], "keyword": keyword}
+        if result.get("network_error"):
+            error_response["network_error"] = True
+            error_response["stop_execution"] = True
+            error_response["user_action_required"] = result.get("user_action_required", "")
+        return error_response
+
+    data = result["data"]
+    matches = []
+    for s in data.get("symbols", []):
+        if s.get("status") == "TRADING" and s.get("quoteAsset") == "USDT" and s.get("contractType", "PERPETUAL") == "PERPETUAL":
+            if keyword in s.get("baseAsset", "") or keyword in s.get("symbol", ""):
+                matches.append({
+                    "symbol": s["symbol"],
+                    "base_asset": s["baseAsset"],
+                    "quote_asset": s["quoteAsset"],
+                    "market": "合约",
+                })
+
+    return {
+        "keyword": keyword,
+        "count": len(matches),
+        "symbols": matches[:30],
+    }
+
+
 def search_alpha_tokens(keyword: str) -> List[Dict[str, Any]]:
     """搜索Alpha代币（从币安Alpha代币列表API）"""
     keyword = keyword.upper()
@@ -1004,7 +1410,51 @@ def get_top_gainers_losers(limit: int = 10) -> Dict[str, Any]:
     return {
         "top_gainers": gainers,
         "top_losers": losers,
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "market": "现货",
+    }
+
+
+def get_futures_top_gainers_losers(limit: int = 10) -> Dict[str, Any]:
+    """获取合约涨跌幅榜"""
+    result = make_futures_request("/ticker/24hr", {})
+
+    if not result["success"]:
+        error_response = {"error": result["error"]}
+        if result.get("network_error"):
+            error_response["network_error"] = True
+            error_response["stop_execution"] = True
+            error_response["user_action_required"] = result.get("user_action_required", "")
+        return error_response
+
+    data = result["data"]
+    usdt_pairs = [d for d in data if d["symbol"].endswith("USDT") and safe_float(d.get("quoteVolume", 0)) > 1000000]
+    sorted_by_change = sorted(usdt_pairs, key=lambda x: safe_float(x.get("priceChangePercent", 0)), reverse=True)
+
+    gainers = []
+    for d in sorted_by_change[:limit]:
+        gainers.append({
+            "symbol": d["symbol"],
+            "price": f"${safe_float(d.get('lastPrice', 0)):,.4f}",
+            "change": f"{safe_float(d.get('priceChangePercent', 0)):+.2f}%",
+            "volume": f"${format_number(safe_float(d.get('quoteVolume', 0)))}",
+        })
+
+    losers = []
+    for d in sorted_by_change[-limit:]:
+        losers.append({
+            "symbol": d["symbol"],
+            "price": f"${safe_float(d.get('lastPrice', 0)):,.4f}",
+            "change": f"{safe_float(d.get('priceChangePercent', 0)):+.2f}%",
+            "volume": f"${format_number(safe_float(d.get('quoteVolume', 0)))}",
+        })
+    losers.reverse()
+
+    return {
+        "top_gainers": gainers,
+        "top_losers": losers,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "market": "合约",
     }
 
 

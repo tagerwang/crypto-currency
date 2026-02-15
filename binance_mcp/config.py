@@ -17,6 +17,12 @@ FUTURES_BASE_URLS = [
     "https://fapi1.binance.com/fapi/v1",
 ]
 
+# 合约专用数据接口（持仓量、多空比等）
+FUTURES_DATA_BASE_URLS = [
+    "https://fapi.binance.com/futures/data",
+    "https://fapi1.binance.com/futures/data",
+]
+
 SPOT_BASE_URL = SPOT_BASE_URLS[0]
 FUTURES_BASE_URL = FUTURES_BASE_URLS[0]
 COIN_FUTURES_BASE_URL = "https://dapi.binance.com/dapi/v1"

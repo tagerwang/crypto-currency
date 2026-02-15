@@ -11,7 +11,11 @@ from .indicators import (
     calculate_rsi, calculate_macd, calculate_bollinger_bands,
     calculate_support_resistance, analyze_trend_pattern, predict_price_probability
 )
-from .api import get_ticker_24h, get_klines
+from .api import (
+    get_ticker_24h, get_klines, get_futures_ticker_24h, get_futures_klines,
+    get_mark_price, get_open_interest, get_open_interest_hist,
+    get_top_long_short_ratio, get_global_long_short_ratio, get_taker_buy_sell_ratio
+)
 
 
 def generate_analysis_summary(trend: Dict, prediction: Dict, rsi: float, macd: Dict) -> str:
@@ -325,5 +329,354 @@ def analyze_kline_patterns(symbol: str, interval: str = "4h") -> Dict[str, Any]:
             f"近期发现{len(patterns)}个形态信号" if patterns else "暂无明显形态信号"
         )
     }
+
+
+def comprehensive_analysis_futures(symbol: str) -> Dict[str, Any]:
+    """
+    合约版综合技术分析（基于1小时K线）
+    使用合约K线和行情数据，适用于合约交易决策
+    """
+    klines_data = get_futures_klines(symbol, "1h", 200)
+
+    if "error" in klines_data:
+        if klines_data.get("network_error"):
+            return klines_data
+        return klines_data
+
+    klines = klines_data["klines"]
+    closes = [k["close"] for k in klines]
+    highs = [k["high"] for k in klines]
+    lows = [k["low"] for k in klines]
+
+    ticker = get_futures_ticker_24h(symbol)
+    if "error" in ticker:
+        if ticker.get("network_error"):
+            return ticker
+        return ticker
+
+    rsi = calculate_rsi(closes)
+    macd = calculate_macd(closes)
+    bb = calculate_bollinger_bands(closes)
+    sr = calculate_support_resistance(highs, lows, closes)
+    trend = analyze_trend_pattern(closes)
+    prediction = predict_price_probability(closes, rsi, macd, bb)
+
+    ma7 = sum(closes[-7:]) / 7 if len(closes) >= 7 else closes[-1]
+    ma20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else closes[-1]
+    ma50 = sum(closes[-50:]) / 50 if len(closes) >= 50 else closes[-1]
+
+    # 获取合约特有指标
+    mark_price_data = get_mark_price(symbol)
+    open_interest_data = get_open_interest(symbol)
+    oi_hist_data = get_open_interest_hist(symbol, "1h", 24)
+    
+    # 构建合约特有指标部分
+    futures_indicators = {}
+    
+    if "error" not in mark_price_data:
+        funding_rate = mark_price_data.get("lastFundingRate", 0)
+        funding_rate_pct = funding_rate * 100
+        funding_time = mark_price_data.get("nextFundingTime_str", "未知")
+        
+        futures_indicators["funding_rate"] = {
+            "current_rate": f"{funding_rate_pct:.4f}%",
+            "annual_rate": f"{funding_rate_pct * 3 * 365:.2f}%",
+            "next_settlement": funding_time,
+            "signal": "多头支付空头" if funding_rate > 0 else "空头支付多头",
+            "description": (
+                f"资金费率为{funding_rate_pct:+.4f}%，"
+                f"{'多头需支付费用，市场偏多' if funding_rate > 0.01 else ('空头需支付费用，市场偏空' if funding_rate < -0.01 else '费率接近0，市场平衡')}"
+            )
+        }
+    
+    if "error" not in open_interest_data:
+        oi = open_interest_data.get("openInterest", 0)
+        oi_value = open_interest_data.get("openInterest_usd_formatted", "N/A")
+        
+        # 分析持仓量趋势（oi_hist_data 为 { symbol, period, history: [...] }）
+        oi_trend = "持平"
+        oi_change_pct = 0
+        hist_list = (oi_hist_data.get("history") or []) if isinstance(oi_hist_data, dict) else []
+        if "error" not in oi_hist_data and len(hist_list) >= 2:
+            recent_oi = hist_list[-1].get("open_interest_value", 0)
+            past_oi = hist_list[0].get("open_interest_value", 0)
+            oi_change_pct = ((recent_oi - past_oi) / past_oi * 100) if past_oi > 0 else 0
+            if oi_change_pct > 5:
+                oi_trend = "大幅上升"
+            elif oi_change_pct > 2:
+                oi_trend = "上升"
+            elif oi_change_pct < -5:
+                oi_trend = "大幅下降"
+            elif oi_change_pct < -2:
+                oi_trend = "下降"
+        
+        futures_indicators["open_interest"] = {
+            "value": f"{oi:,.2f}",
+            "value_usd": oi_value,
+            "trend_24h": oi_trend,
+            "change_24h": f"{oi_change_pct:+.2f}%",
+            "description": (
+                f"持仓量{oi_trend}，"
+                f"{'市场参与度提升，趋势可能延续' if oi_change_pct > 5 else ('持仓量减少，可能面临反转' if oi_change_pct < -5 else '持仓量稳定')}"
+            )
+        }
+    
+    result = {
+        "symbol": ticker["symbol"],
+        "market": "合约",
+        "current_price": ticker["price_formatted"],
+        "change_24h": ticker["price_change_display"],
+        "volume_24h": ticker["quote_volume_formatted"],
+        "trend_emoji": ticker["trend_emoji"],
+        "analysis_timeframe": "1小时K线（合约）",
+        "analysis_note": "⚠️ 本分析基于合约1小时K线，适用于合约交易决策",
+
+        "trend_analysis": trend,
+        "prediction": prediction,
+
+        "technical_indicators": {
+            "rsi": {
+                "value": rsi,
+                "signal": "超卖" if rsi < 30 else ("超买" if rsi > 70 else "中性"),
+                "description": f"RSI={rsi}（1小时K线），{'建议关注反弹' if rsi < 30 else ('注意回调风险' if rsi > 70 else '处于正常区间')}"
+            },
+            "macd": {
+                "macd_line": macd["macd"],
+                "signal_line": macd["signal"],
+                "histogram": macd["histogram"],
+                "signal": "多头" if macd["histogram"] > 0 else "空头",
+                "description": f"MACD柱状图{'为正，多头动能' if macd['histogram'] > 0 else '为负，空头动能'}（1小时K线）"
+            },
+            "bollinger_bands": {
+                "upper": f"${bb['upper']:,.4f}",
+                "middle": f"${bb['middle']:,.4f}",
+                "lower": f"${bb['lower']:,.4f}",
+                "bandwidth": f"{bb['bandwidth']:.2f}%",
+                "position": "上轨附近" if closes[-1] > bb["upper"] * 0.98 else (
+                    "下轨附近" if closes[-1] < bb["lower"] * 1.02 else "中轨区域"
+                ),
+                "note": "基于1小时K线"
+            },
+            "moving_averages": {
+                "ma7": f"${ma7:,.4f}",
+                "ma20": f"${ma20:,.4f}",
+                "ma50": f"${ma50:,.4f}",
+                "price_vs_ma7": f"{(closes[-1] / ma7 - 1) * 100:+.2f}%",
+                "price_vs_ma20": f"{(closes[-1] / ma20 - 1) * 100:+.2f}%",
+                "note": "均线基于1小时K线计算"
+            }
+        },
+
+        "support_resistance": {
+            "resistance_levels": [f"${r:,.4f}" for r in sr["resistance"][:3]],
+            "support_levels": [f"${s:,.4f}" for s in sr["support"][:3]],
+            "note": "基于1小时K线的高低点计算"
+        },
+
+        "summary": generate_analysis_summary(trend, prediction, rsi, macd) + "（合约1小时K线分析）"
+    }
+    
+    # 添加合约特有指标（如果有数据）
+    if futures_indicators:
+        result["futures_specific_indicators"] = futures_indicators
+    
+    return result
+
+
+def analyze_futures_kline_patterns(symbol: str, interval: str = "4h") -> Dict[str, Any]:
+    """合约K线形态分析（默认4小时K线）"""
+    klines_data = get_futures_klines(symbol, interval, 100)
+
+    if "error" in klines_data:
+        if klines_data.get("network_error"):
+            return klines_data
+        return klines_data
+
+    klines = klines_data["klines"]
+
+    if len(klines) < 10:
+        return {"error": "数据不足，无法分析"}
+
+    patterns = []
+    recent = klines[-10:]
+
+    for i in range(2, len(recent)):
+        k = recent[i]
+        prev = recent[i - 1]
+        body = k["close"] - k["open"]
+        upper_shadow = k["high"] - max(k["open"], k["close"])
+        lower_shadow = min(k["open"], k["close"]) - k["low"]
+        body_size = abs(body)
+
+        if body_size < (k["high"] - k["low"]) * 0.1:
+            patterns.append({"pattern": "十字星", "time": k["open_time"], "significance": "趋势可能反转", "type": "reversal"})
+        if lower_shadow > body_size * 2 and upper_shadow < body_size * 0.5:
+            patterns.append({"pattern": "锤子线", "time": k["open_time"], "significance": "底部反转信号", "type": "bullish"})
+        if upper_shadow > body_size * 2 and lower_shadow < body_size * 0.5:
+            patterns.append({"pattern": "上吊线", "time": k["open_time"], "significance": "顶部反转信号", "type": "bearish"})
+        prev_body = prev["close"] - prev["open"]
+        if body > 0 and prev_body < 0 and body > abs(prev_body) * 1.5:
+            patterns.append({"pattern": "看涨吞没", "time": k["open_time"], "significance": "强烈看涨信号", "type": "bullish"})
+        elif body < 0 and prev_body > 0 and abs(body) > prev_body * 1.5:
+            patterns.append({"pattern": "看跌吞没", "time": k["open_time"], "significance": "强烈看跌信号", "type": "bearish"})
+
+    closes = [k["close"] for k in klines]
+    ma20 = sum(closes[-20:]) / 20
+    ma50 = sum(closes[-50:]) / 50 if len(closes) >= 50 else ma20
+    overall_pattern = "上升趋势" if closes[-1] > ma20 > ma50 else (
+        "下降趋势" if closes[-1] < ma20 < ma50 else "震荡整理"
+    )
+
+    return {
+        "symbol": klines_data["symbol"],
+        "market": "合约",
+        "interval": interval,
+        "interval_note": f"⚠️ 本分析基于合约{interval}周期K线",
+        "overall_pattern": overall_pattern,
+        "recent_patterns": patterns[-5:] if patterns else [],
+        "pattern_count": len(patterns),
+        "latest_kline": {
+            "time": klines[-1]["open_time"],
+            "open": f"${klines[-1]['open']:,.4f}",
+            "high": f"${klines[-1]['high']:,.4f}",
+            "low": f"${klines[-1]['low']:,.4f}",
+            "close": f"${klines[-1]['close']:,.4f}",
+            "volume": format_number(klines[-1]["volume"])
+        },
+        "analysis_summary": f"当前处于{overall_pattern}（基于{interval}K线），" + (
+            f"近期发现{len(patterns)}个形态信号" if patterns else "暂无明显形态信号"
+        )
+    }
+
+
+def analyze_futures_market_factors(symbol: str) -> Dict[str, Any]:
+    """
+    合约市场影响因素分析
+    包含：与BTC/ETH对比、相对强弱、多空比、主动买卖比等市场情绪指标
+    """
+    ticker = get_futures_ticker_24h(symbol)
+
+    if "error" in ticker:
+        if ticker.get("network_error"):
+            return ticker
+        return ticker
+
+    btc_ticker = get_futures_ticker_24h("BTC")
+    eth_ticker = get_futures_ticker_24h("ETH")
+
+    symbol_change = ticker["price_change_percent"]
+    btc_change = btc_ticker.get("price_change_percent", 0) if "error" not in btc_ticker else 0
+    eth_change = eth_ticker.get("price_change_percent", 0) if "error" not in eth_ticker else 0
+
+    vs_btc = symbol_change - btc_change
+    vs_eth = symbol_change - eth_change
+
+    factors = []
+    if btc_change > 2:
+        factors.append("📈 BTC大涨带动市场情绪")
+    elif btc_change < -2:
+        factors.append("📉 BTC下跌拖累市场")
+    if vs_btc > 5:
+        factors.append(f"💪 相对BTC强势 (+{vs_btc:.1f}%)")
+    elif vs_btc < -5:
+        factors.append(f"😔 相对BTC弱势 ({vs_btc:.1f}%)")
+    volume = ticker["quote_volume_24h"]
+    if volume > 100000000:
+        factors.append("🔥 交易活跃，资金流入明显")
+    elif volume < 1000000:
+        factors.append("💤 交易清淡，流动性较差")
+
+    # 获取市场情绪指标
+    sentiment_indicators = {}
+    
+    # 大户账户多空比（Top 20% 账户）
+    top_ratio_data = get_top_long_short_ratio(symbol, "1h", 24)
+    if "error" not in top_ratio_data and len(top_ratio_data) > 0:
+        latest_ratio = top_ratio_data[-1]
+        long_short_ratio = latest_ratio.get("longShortRatio", 1.0)
+        long_account_pct = latest_ratio.get("longAccount", 0)
+        short_account_pct = latest_ratio.get("shortAccount", 0)
+        
+        sentiment_indicators["top_traders_sentiment"] = {
+            "long_short_ratio": f"{long_short_ratio:.2f}",
+            "long_accounts": f"{long_account_pct:.2f}%",
+            "short_accounts": f"{short_account_pct:.2f}%",
+            "signal": "偏多" if long_short_ratio > 1.2 else ("偏空" if long_short_ratio < 0.8 else "均衡"),
+            "description": (
+                f"大户账户多空比{long_short_ratio:.2f}，"
+                f"{'大户偏多，看涨情绪强' if long_short_ratio > 1.5 else ('大户偏空，看跌情绪强' if long_short_ratio < 0.7 else '多空较均衡')}"
+            )
+        }
+        
+        if long_short_ratio > 1.5:
+            factors.append(f"🐋 大户偏多（多空比{long_short_ratio:.2f}）")
+        elif long_short_ratio < 0.7:
+            factors.append(f"🐋 大户偏空（多空比{long_short_ratio:.2f}）")
+    
+    # 全市场多空比
+    global_ratio_data = get_global_long_short_ratio(symbol, "1h", 24)
+    if "error" not in global_ratio_data and len(global_ratio_data) > 0:
+        latest_global = global_ratio_data[-1]
+        global_ratio = latest_global.get("longShortRatio", 1.0)
+        
+        sentiment_indicators["global_sentiment"] = {
+            "long_short_ratio": f"{global_ratio:.2f}",
+            "signal": "偏多" if global_ratio > 1.2 else ("偏空" if global_ratio < 0.8 else "均衡"),
+            "description": (
+                f"全市场多空比{global_ratio:.2f}，"
+                f"{'散户偏多，注意情绪过热' if global_ratio > 2.0 else ('散户偏空' if global_ratio < 0.5 else '市场情绪较均衡')}"
+            )
+        }
+    
+    # 主动买卖比（Taker）
+    taker_ratio_data = get_taker_buy_sell_ratio(symbol, "1h", 24)
+    if "error" not in taker_ratio_data and len(taker_ratio_data) > 0:
+        latest_taker = taker_ratio_data[-1]
+        buy_sell_ratio = latest_taker.get("buySellRatio", 1.0)
+        buy_vol = latest_taker.get("buyVol", 0)
+        sell_vol = latest_taker.get("sellVol", 0)
+        
+        sentiment_indicators["taker_sentiment"] = {
+            "buy_sell_ratio": f"{buy_sell_ratio:.2f}",
+            "buy_volume": f"{buy_vol:,.0f}",
+            "sell_volume": f"{sell_vol:,.0f}",
+            "signal": "主动买入强" if buy_sell_ratio > 1.2 else ("主动卖出强" if buy_sell_ratio < 0.8 else "均衡"),
+            "description": (
+                f"主动买卖比{buy_sell_ratio:.2f}，"
+                f"{'主动买盘强劲，上涨动力足' if buy_sell_ratio > 1.5 else ('主动卖盘强劲，下跌压力大' if buy_sell_ratio < 0.7 else '买卖力量较均衡')}"
+            )
+        }
+        
+        if buy_sell_ratio > 1.5:
+            factors.append(f"💰 主动买盘强劲（买卖比{buy_sell_ratio:.2f}）")
+        elif buy_sell_ratio < 0.7:
+            factors.append(f"💸 主动卖盘强劲（买卖比{buy_sell_ratio:.2f}）")
+
+    result = {
+        "symbol": ticker["symbol"],
+        "market": "合约",
+        "price": ticker["price_formatted"],
+        "change_24h": ticker["price_change_display"],
+        "market_comparison": {
+            "btc_change_24h": f"{btc_change:+.2f}%",
+            "eth_change_24h": f"{eth_change:+.2f}%",
+            "vs_btc": f"{vs_btc:+.2f}%",
+            "vs_eth": f"{vs_eth:+.2f}%",
+            "relative_strength": "强于大盘" if vs_btc > 0 else "弱于大盘"
+        },
+        "factors": factors if factors else ["市场平稳，无特殊因素"],
+        "suggestions": [
+            "关注BTC走势，大盘方向影响整体市场",
+            "注意成交量变化，量价配合更健康",
+            "结合资金费率、持仓量等合约特有指标",
+            "观察大户和散户多空比差异，发现潜在反转信号"
+        ]
+    }
+    
+    # 添加市场情绪指标（如果有数据）
+    if sentiment_indicators:
+        result["sentiment_indicators"] = sentiment_indicators
+    
+    return result
 
 

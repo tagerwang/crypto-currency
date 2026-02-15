@@ -24,24 +24,32 @@ from .server import handle_mcp_request, main
 __version__ = "1.1.0"
 __all__ = [
     # Config
-    "SPOT_BASE_URLS", "FUTURES_BASE_URLS", "HEADERS", "KLINE_INTERVALS",
-    
+    "SPOT_BASE_URLS", "FUTURES_BASE_URLS", "FUTURES_DATA_BASE_URLS", "HEADERS", "KLINE_INTERVALS",
+
     # Utils
     "format_number", "timestamp_to_datetime", "safe_float", "calculate_time_remaining",
-    
+
     # Indicators
     "calculate_sma", "calculate_ema", "calculate_rsi", "calculate_macd",
     "calculate_bollinger_bands", "calculate_support_resistance",
     "analyze_trend_pattern", "predict_price_probability",
-    
+
     # API
-    "make_spot_request", "make_futures_request",
+    "make_spot_request", "make_futures_request", "make_futures_data_request",
     "get_spot_price", "get_ticker_24h", "get_multiple_tickers",
-    "get_klines", "get_futures_price", "get_funding_rate",
-    "analyze_spot_vs_futures", "search_symbols", "get_top_gainers_losers",
-    
+    "get_klines", "get_futures_price", "get_futures_ticker_24h", "get_futures_klines",
+    "get_futures_multiple_tickers", "get_funding_rate", "get_realtime_funding_rate",
+    "get_extreme_funding_rates", "get_mark_price", "get_open_interest",
+    "get_open_interest_hist", "get_top_long_short_ratio",
+    "get_top_long_short_position_ratio", "get_global_long_short_ratio",
+    "get_taker_buy_sell_ratio", "analyze_spot_vs_futures",
+    "search_symbols", "search_futures_symbols", "get_top_gainers_losers",
+    "get_futures_top_gainers_losers",
+
     # Analysis
     "comprehensive_analysis", "analyze_market_factors", "analyze_kline_patterns",
+    "comprehensive_analysis_futures", "analyze_futures_kline_patterns",
+    "analyze_futures_market_factors",
     
     # Alpha Realtime
     "fetch_realtime_alpha_airdrops", "fetch_alpha_token_price_from_alpha123",

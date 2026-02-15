@@ -9,12 +9,19 @@ from typing import Dict, Any
 
 from .api import (
     get_spot_price, get_ticker_24h, get_multiple_tickers,
-    get_klines, get_futures_price, get_funding_rate,
-    get_realtime_funding_rate, get_extreme_funding_rates,
-    analyze_spot_vs_futures, search_symbols, get_top_gainers_losers
+    get_klines, get_futures_price, get_futures_ticker_24h, get_futures_klines,
+    get_futures_multiple_tickers, get_funding_rate, get_realtime_funding_rate,
+    get_extreme_funding_rates, get_mark_price, get_open_interest,
+    get_open_interest_hist, get_top_long_short_ratio,
+    get_top_long_short_position_ratio, get_global_long_short_ratio,
+    get_taker_buy_sell_ratio, analyze_spot_vs_futures,
+    search_symbols, search_futures_symbols, get_top_gainers_losers,
+    get_futures_top_gainers_losers
 )
 from .analysis import (
-    comprehensive_analysis, analyze_market_factors, analyze_kline_patterns
+    comprehensive_analysis, analyze_market_factors, analyze_kline_patterns,
+    comprehensive_analysis_futures, analyze_futures_kline_patterns,
+    analyze_futures_market_factors
 )
 from .alpha import (
     get_alpha_tokens_list, analyze_alpha_token,
@@ -218,6 +225,179 @@ MCP_TOOLS = [
             "required": ["symbol"]
         }
     },
+    {
+        "name": "get_futures_ticker_24h",
+        "description": "获取合约24小时行情数据（直接使用合约数据，非现货fallback）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string", "description": "交易对符号"}
+            },
+            "required": ["symbol"]
+        }
+    },
+    {
+        "name": "get_futures_klines",
+        "description": "获取合约K线数据",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string", "description": "交易对符号"},
+                "interval": {"type": "string", "description": "时间周期，默认1h", "default": "1h"},
+                "limit": {"type": "integer", "description": "K线数量，最大1000", "default": 100}
+            },
+            "required": ["symbol"]
+        }
+    },
+    {
+        "name": "get_futures_multiple_tickers",
+        "description": "批量获取多个合约的24小时行情",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "symbols": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "交易对符号数组"
+                }
+            },
+            "required": ["symbols"]
+        }
+    },
+    {
+        "name": "search_futures_symbols",
+        "description": "搜索合约交易对",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "keyword": {"type": "string", "description": "搜索关键词"}
+            },
+            "required": ["keyword"]
+        }
+    },
+    {
+        "name": "get_futures_top_gainers_losers",
+        "description": "获取合约涨跌幅排行榜",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "返回数量，默认10", "default": 10}
+            }
+        }
+    },
+    {
+        "name": "get_open_interest",
+        "description": "获取合约当前持仓量",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"symbol": {"type": "string", "description": "交易对符号"}},
+            "required": ["symbol"]
+        }
+    },
+    {
+        "name": "get_open_interest_hist",
+        "description": "获取合约持仓量历史",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string", "description": "交易对符号"},
+                "period": {"type": "string", "description": "周期: 5m,15m,30m,1h,2h,4h,6h,12h,1d", "default": "1h"},
+                "limit": {"type": "integer", "description": "数量，默认30", "default": 30}
+            },
+            "required": ["symbol"]
+        }
+    },
+    {
+        "name": "get_top_long_short_ratio",
+        "description": "获取大户账户多空比（top 20%用户）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string"},
+                "period": {"type": "string", "default": "1h"},
+                "limit": {"type": "integer", "default": 30}
+            },
+            "required": ["symbol"]
+        }
+    },
+    {
+        "name": "get_top_long_short_position_ratio",
+        "description": "获取大户持仓多空比",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string"},
+                "period": {"type": "string", "default": "1h"},
+                "limit": {"type": "integer", "default": 30}
+            },
+            "required": ["symbol"]
+        }
+    },
+    {
+        "name": "get_global_long_short_ratio",
+        "description": "获取全市场多空比",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string"},
+                "period": {"type": "string", "default": "1h"},
+                "limit": {"type": "integer", "default": 30}
+            },
+            "required": ["symbol"]
+        }
+    },
+    {
+        "name": "get_taker_buy_sell_ratio",
+        "description": "获取主动买卖比（taker long/short ratio）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string"},
+                "period": {"type": "string", "default": "1h"},
+                "limit": {"type": "integer", "default": 30}
+            },
+            "required": ["symbol"]
+        }
+    },
+    {
+        "name": "get_mark_price",
+        "description": "获取合约标记价格、指数价格、资金费率及下次结算时间",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"symbol": {"type": "string"}},
+            "required": ["symbol"]
+        }
+    },
+    {
+        "name": "comprehensive_analysis_futures",
+        "description": "合约版综合技术分析（基于1小时K线）：RSI、MACD、布林带、支撑阻力等",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"symbol": {"type": "string"}},
+            "required": ["symbol"]
+        }
+    },
+    {
+        "name": "analyze_futures_kline_patterns",
+        "description": "合约K线形态分析（默认4小时）：十字星、锤子线、吞没形态等",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string"},
+                "interval": {"type": "string", "default": "4h"}
+            },
+            "required": ["symbol"]
+        }
+    },
+    {
+        "name": "analyze_futures_market_factors",
+        "description": "合约市场因素分析：与BTC/ETH对比、相对强弱",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"symbol": {"type": "string"}},
+            "required": ["symbol"]
+        }
+    },
     # Alpha分析
     {
         "name": "get_realtime_alpha_airdrops",
@@ -406,6 +586,63 @@ def handle_mcp_request(request: Dict[str, Any]) -> Dict[str, Any] | None:
                 )
             elif tool_name == "analyze_spot_vs_futures":
                 result = analyze_spot_vs_futures(arguments.get("symbol", ""))
+            elif tool_name == "get_futures_ticker_24h":
+                result = get_futures_ticker_24h(arguments.get("symbol", ""))
+            elif tool_name == "get_futures_klines":
+                result = get_futures_klines(
+                    arguments.get("symbol", ""),
+                    arguments.get("interval", "1h"),
+                    arguments.get("limit", 100)
+                )
+            elif tool_name == "get_futures_multiple_tickers":
+                result = get_futures_multiple_tickers(arguments.get("symbols", []))
+            elif tool_name == "search_futures_symbols":
+                result = search_futures_symbols(arguments.get("keyword", ""))
+            elif tool_name == "get_futures_top_gainers_losers":
+                result = get_futures_top_gainers_losers(arguments.get("limit", 10))
+            elif tool_name == "get_open_interest":
+                result = get_open_interest(arguments.get("symbol", ""))
+            elif tool_name == "get_open_interest_hist":
+                result = get_open_interest_hist(
+                    arguments.get("symbol", ""),
+                    arguments.get("period", "1h"),
+                    arguments.get("limit", 30)
+                )
+            elif tool_name == "get_top_long_short_ratio":
+                result = get_top_long_short_ratio(
+                    arguments.get("symbol", ""),
+                    arguments.get("period", "1h"),
+                    arguments.get("limit", 30)
+                )
+            elif tool_name == "get_top_long_short_position_ratio":
+                result = get_top_long_short_position_ratio(
+                    arguments.get("symbol", ""),
+                    arguments.get("period", "1h"),
+                    arguments.get("limit", 30)
+                )
+            elif tool_name == "get_global_long_short_ratio":
+                result = get_global_long_short_ratio(
+                    arguments.get("symbol", ""),
+                    arguments.get("period", "1h"),
+                    arguments.get("limit", 30)
+                )
+            elif tool_name == "get_taker_buy_sell_ratio":
+                result = get_taker_buy_sell_ratio(
+                    arguments.get("symbol", ""),
+                    arguments.get("period", "1h"),
+                    arguments.get("limit", 30)
+                )
+            elif tool_name == "get_mark_price":
+                result = get_mark_price(arguments.get("symbol", ""))
+            elif tool_name == "comprehensive_analysis_futures":
+                result = comprehensive_analysis_futures(arguments.get("symbol", ""))
+            elif tool_name == "analyze_futures_kline_patterns":
+                result = analyze_futures_kline_patterns(
+                    arguments.get("symbol", ""),
+                    arguments.get("interval", "4h")
+                )
+            elif tool_name == "analyze_futures_market_factors":
+                result = analyze_futures_market_factors(arguments.get("symbol", ""))
             
             # Alpha分析
             elif tool_name == "get_realtime_alpha_airdrops":
