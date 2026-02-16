@@ -165,6 +165,18 @@ def make_futures_data_request(endpoint: str, params: Dict = None) -> Dict[str, A
     return fetch_futures_data_with_dedup(endpoint, params, lambda: _do_futures_data_request(endpoint, params))
 
 
+def _futures_trading_symbol_set(exchange_info_data: Dict) -> set:
+    """从合约 exchangeInfo 的 data 中提取 status=TRADING、USDT/USDC 永续合约的 symbol 集合（与 APP 可交易列表一致）"""
+    symbols = exchange_info_data.get("symbols", [])
+    return {
+        s["symbol"]
+        for s in symbols
+        if s.get("status") == "TRADING"
+        and s.get("quoteAsset") in ("USDT", "USDC")
+        and s.get("contractType", "PERPETUAL") == "PERPETUAL"
+    }
+
+
 def make_alpha_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
     """发起Alpha API请求"""
     url = f"{ALPHA_BASE_URL}{endpoint}"
@@ -835,10 +847,19 @@ def get_realtime_funding_rate(symbol: str) -> Dict[str, Any]:
 
 
 def get_extreme_funding_rates(threshold: float = 0.1, limit: int = 20) -> Dict[str, Any]:
-    """获取极端资金费率的合约列表"""
-    # 获取所有合约信息
+    """获取极端资金费率的合约列表（仅 status=TRADING 的 USDT/USDC 永续合约，与 APP 一致）"""
+    info_result = make_futures_request("/exchangeInfo", {})
+    if not info_result["success"]:
+        error_response = {"error": info_result["error"]}
+        if info_result.get("network_error"):
+            error_response["network_error"] = True
+            error_response["stop_execution"] = True
+            error_response["user_action_required"] = info_result.get("user_action_required", "")
+        return error_response
+
+    trading_symbols = _futures_trading_symbol_set(info_result["data"])
+
     result = make_futures_request("/premiumIndex", {})
-    
     if not result["success"]:
         error_response = {"error": result["error"]}
         if result.get("network_error"):
@@ -846,15 +867,15 @@ def get_extreme_funding_rates(threshold: float = 0.1, limit: int = 20) -> Dict[s
             error_response["stop_execution"] = True
             error_response["user_action_required"] = result.get("user_action_required", "")
         return error_response
-    
+
     data = result["data"]
-    
+
     extreme_negative = []  # 负费率（空头付费）
     extreme_positive = []  # 正费率（多头付费）
-    
+
     for item in data:
         symbol = item.get("symbol", "")
-        if not symbol.endswith("USDT"):
+        if symbol not in trading_symbols:
             continue
             
         mark_price = safe_float(item.get("markPrice", 0))
@@ -1319,7 +1340,7 @@ def search_futures_symbols(keyword: str) -> Dict[str, Any]:
     data = result["data"]
     matches = []
     for s in data.get("symbols", []):
-        if s.get("status") == "TRADING" and s.get("quoteAsset") == "USDT" and s.get("contractType", "PERPETUAL") == "PERPETUAL":
+        if s.get("status") == "TRADING" and s.get("quoteAsset") in ("USDT", "USDC") and s.get("contractType", "PERPETUAL") == "PERPETUAL":
             if keyword in s.get("baseAsset", "") or keyword in s.get("symbol", ""):
                 matches.append({
                     "symbol": s["symbol"],
@@ -1416,9 +1437,19 @@ def get_top_gainers_losers(limit: int = 10) -> Dict[str, Any]:
 
 
 def get_futures_top_gainers_losers(limit: int = 10) -> Dict[str, Any]:
-    """获取合约涨跌幅榜"""
-    result = make_futures_request("/ticker/24hr", {})
+    """获取合约涨跌幅榜（仅包含 exchangeInfo 中 status=TRADING 的 USDT/USDC 永续合约，与 APP 合约市场一致）"""
+    info_result = make_futures_request("/exchangeInfo", {})
+    if not info_result["success"]:
+        error_response = {"error": info_result["error"]}
+        if info_result.get("network_error"):
+            error_response["network_error"] = True
+            error_response["stop_execution"] = True
+            error_response["user_action_required"] = info_result.get("user_action_required", "")
+        return error_response
 
+    trading_symbols = _futures_trading_symbol_set(info_result["data"])
+
+    result = make_futures_request("/ticker/24hr", {})
     if not result["success"]:
         error_response = {"error": result["error"]}
         if result.get("network_error"):
@@ -1428,7 +1459,12 @@ def get_futures_top_gainers_losers(limit: int = 10) -> Dict[str, Any]:
         return error_response
 
     data = result["data"]
-    usdt_pairs = [d for d in data if d["symbol"].endswith("USDT") and safe_float(d.get("quoteVolume", 0)) > 1000000]
+    usdt_pairs = [
+        d
+        for d in data
+        if d["symbol"] in trading_symbols
+        and safe_float(d.get("quoteVolume", 0)) > 1000000
+    ]
     sorted_by_change = sorted(usdt_pairs, key=lambda x: safe_float(x.get("priceChangePercent", 0)), reverse=True)
 
     gainers = []
