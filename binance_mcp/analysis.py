@@ -374,9 +374,10 @@ def comprehensive_analysis_futures(symbol: str) -> Dict[str, Any]:
     futures_indicators = {}
     
     if "error" not in mark_price_data:
-        funding_rate = mark_price_data.get("lastFundingRate", 0)
+        # 使用 get_mark_price 实际返回字段：last_funding_rate_decimal, next_funding_time
+        funding_rate = mark_price_data.get("last_funding_rate_decimal", 0)
         funding_rate_pct = funding_rate * 100
-        funding_time = mark_price_data.get("nextFundingTime_str", "未知")
+        funding_time = mark_price_data.get("next_funding_time", "未知")
         
         futures_indicators["funding_rate"] = {
             "current_rate": f"{funding_rate_pct:.4f}%",
@@ -390,13 +391,21 @@ def comprehensive_analysis_futures(symbol: str) -> Dict[str, Any]:
         }
     
     if "error" not in open_interest_data:
-        oi = open_interest_data.get("openInterest", 0)
-        oi_value = open_interest_data.get("openInterest_usd_formatted", "N/A")
-        
+        # 使用 get_open_interest 实际返回的字段：open_interest, open_interest_formatted（非 openInterest）
+        oi = open_interest_data.get("open_interest", 0)
+        oi_formatted = open_interest_data.get("open_interest_formatted", "N/A")
+
         # 分析持仓量趋势（oi_hist_data 为 { symbol, period, history: [...] }）
         oi_trend = "持平"
         oi_change_pct = 0
         hist_list = (oi_hist_data.get("history") or []) if isinstance(oi_hist_data, dict) else []
+        # 从历史数据取最近一条的美元价值（sumOpenInterestValue），用于展示
+        oi_value_usd = "N/A"
+        if "error" not in oi_hist_data and len(hist_list) >= 1:
+            last = hist_list[-1]
+            oi_value_usd = last.get("open_interest_value")
+            if oi_value_usd and oi_value_usd > 0:
+                oi_value_usd = f"${oi_value_usd:,.0f}"
         if "error" not in oi_hist_data and len(hist_list) >= 2:
             recent_oi = hist_list[-1].get("open_interest_value", 0)
             past_oi = hist_list[0].get("open_interest_value", 0)
@@ -409,10 +418,10 @@ def comprehensive_analysis_futures(symbol: str) -> Dict[str, Any]:
                 oi_trend = "大幅下降"
             elif oi_change_pct < -2:
                 oi_trend = "下降"
-        
+
         futures_indicators["open_interest"] = {
-            "value": f"{oi:,.2f}",
-            "value_usd": oi_value,
+            "value": oi_formatted if oi_formatted != "N/A" else f"{oi:,.2f}",
+            "value_usd": oi_value_usd,
             "trend_24h": oi_trend,
             "change_24h": f"{oi_change_pct:+.2f}%",
             "description": (
@@ -589,18 +598,19 @@ def analyze_futures_market_factors(symbol: str) -> Dict[str, Any]:
     # 获取市场情绪指标
     sentiment_indicators = {}
     
-    # 大户账户多空比（Top 20% 账户）
+    # 大户账户多空比（Top 20% 账户）- 使用返回的 history 列表及 snake_case 字段
     top_ratio_data = get_top_long_short_ratio(symbol, "1h", 24)
-    if "error" not in top_ratio_data and len(top_ratio_data) > 0:
-        latest_ratio = top_ratio_data[-1]
-        long_short_ratio = latest_ratio.get("longShortRatio", 1.0)
-        long_account_pct = latest_ratio.get("longAccount", 0)
-        short_account_pct = latest_ratio.get("shortAccount", 0)
+    hist_top = (top_ratio_data.get("history") or []) if isinstance(top_ratio_data, dict) else []
+    if "error" not in top_ratio_data and len(hist_top) > 0:
+        latest_ratio = hist_top[-1]
+        long_short_ratio = latest_ratio.get("long_short_ratio", 1.0)
+        long_account_str = latest_ratio.get("long_account", "0%")
+        short_account_str = latest_ratio.get("short_account", "0%")
         
         sentiment_indicators["top_traders_sentiment"] = {
             "long_short_ratio": f"{long_short_ratio:.2f}",
-            "long_accounts": f"{long_account_pct:.2f}%",
-            "short_accounts": f"{short_account_pct:.2f}%",
+            "long_accounts": long_account_str,
+            "short_accounts": short_account_str,
             "signal": "偏多" if long_short_ratio > 1.2 else ("偏空" if long_short_ratio < 0.8 else "均衡"),
             "description": (
                 f"大户账户多空比{long_short_ratio:.2f}，"
@@ -613,11 +623,12 @@ def analyze_futures_market_factors(symbol: str) -> Dict[str, Any]:
         elif long_short_ratio < 0.7:
             factors.append(f"🐋 大户偏空（多空比{long_short_ratio:.2f}）")
     
-    # 全市场多空比
+    # 全市场多空比 - 使用 history 及 snake_case 字段
     global_ratio_data = get_global_long_short_ratio(symbol, "1h", 24)
-    if "error" not in global_ratio_data and len(global_ratio_data) > 0:
-        latest_global = global_ratio_data[-1]
-        global_ratio = latest_global.get("longShortRatio", 1.0)
+    hist_global = (global_ratio_data.get("history") or []) if isinstance(global_ratio_data, dict) else []
+    if "error" not in global_ratio_data and len(hist_global) > 0:
+        latest_global = hist_global[-1]
+        global_ratio = latest_global.get("long_short_ratio", 1.0)
         
         sentiment_indicators["global_sentiment"] = {
             "long_short_ratio": f"{global_ratio:.2f}",
@@ -628,13 +639,14 @@ def analyze_futures_market_factors(symbol: str) -> Dict[str, Any]:
             )
         }
     
-    # 主动买卖比（Taker）
+    # 主动买卖比（Taker）- 使用 history 及 snake_case 字段
     taker_ratio_data = get_taker_buy_sell_ratio(symbol, "1h", 24)
-    if "error" not in taker_ratio_data and len(taker_ratio_data) > 0:
-        latest_taker = taker_ratio_data[-1]
-        buy_sell_ratio = latest_taker.get("buySellRatio", 1.0)
-        buy_vol = latest_taker.get("buyVol", 0)
-        sell_vol = latest_taker.get("sellVol", 0)
+    hist_taker = (taker_ratio_data.get("history") or []) if isinstance(taker_ratio_data, dict) else []
+    if "error" not in taker_ratio_data and len(hist_taker) > 0:
+        latest_taker = hist_taker[-1]
+        buy_sell_ratio = latest_taker.get("buy_sell_ratio", 1.0)
+        buy_vol = latest_taker.get("buy_vol", 0)
+        sell_vol = latest_taker.get("sell_vol", 0)
         
         sentiment_indicators["taker_sentiment"] = {
             "buy_sell_ratio": f"{buy_sell_ratio:.2f}",

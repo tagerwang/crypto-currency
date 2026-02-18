@@ -975,6 +975,9 @@ def get_mark_price(symbol: str) -> Dict[str, Any]:
     else:
         countdown_str = "结算中"
 
+    # 原始费率（小数，如 0.0001）供调用方做数值比较
+    last_funding_rate_decimal = safe_float(data.get("lastFundingRate", 0))
+
     return {
         "symbol": symbol,
         "market": "合约",
@@ -983,6 +986,7 @@ def get_mark_price(symbol: str) -> Dict[str, Any]:
         "index_price": index_price,
         "index_price_formatted": f"${index_price:,.4f}",
         "last_funding_rate": f"{last_funding_rate:+.4f}%",
+        "last_funding_rate_decimal": last_funding_rate_decimal,
         "next_funding_time": timestamp_to_datetime(next_funding_time) if next_funding_time else "N/A",
         "countdown_to_settlement": countdown_str,
         "estimated_settle_price": f"${safe_float(estimated_settle):,.4f}" if estimated_settle else "N/A",
