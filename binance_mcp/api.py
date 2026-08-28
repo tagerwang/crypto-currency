@@ -3,6 +3,7 @@
 币安API调用 - 现货、合约、K线等接口
 """
 
+import json
 import requests
 from typing import Dict, List, Any
 from datetime import datetime
@@ -27,7 +28,7 @@ def _do_spot_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
     for base_url in SPOT_BASE_URLS:
         url = f"{base_url}{endpoint}"
         try:
-            response = requests.get(url, params=params, headers=HEADERS, timeout=10)
+            response = requests.get(url, params=params, headers=HEADERS, timeout=20)
             
             # 检查地区限制
             if response.status_code == 451:
@@ -51,6 +52,10 @@ def _do_spot_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
             continue
         except requests.exceptions.RequestException as e:
             last_error = str(e)
+            is_network_error = True
+            continue
+        except (json.JSONDecodeError, ValueError) as e:
+            last_error = f"响应不是有效JSON: {e}"
             is_network_error = True
             continue
     
@@ -77,7 +82,7 @@ def _do_futures_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
     for base_url in FUTURES_BASE_URLS:
         url = f"{base_url}{endpoint}"
         try:
-            response = requests.get(url, params=params, headers=HEADERS, timeout=10)
+            response = requests.get(url, params=params, headers=HEADERS, timeout=20)
 
             if response.status_code == 451:
                 continue
@@ -99,6 +104,10 @@ def _do_futures_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
             continue
         except requests.exceptions.RequestException as e:
             last_error = str(e)
+            is_network_error = True
+            continue
+        except (json.JSONDecodeError, ValueError) as e:
+            last_error = f"响应不是有效JSON: {e}"
             is_network_error = True
             continue
 
@@ -125,7 +134,7 @@ def _do_futures_data_request(endpoint: str, params: Dict = None) -> Dict[str, An
     for base_url in FUTURES_DATA_BASE_URLS:
         url = f"{base_url.rstrip('/')}/{endpoint.lstrip('/')}"
         try:
-            response = requests.get(url, params=params, headers=HEADERS, timeout=10)
+            response = requests.get(url, params=params, headers=HEADERS, timeout=20)
 
             if response.status_code == 451:
                 continue
@@ -147,6 +156,10 @@ def _do_futures_data_request(endpoint: str, params: Dict = None) -> Dict[str, An
             continue
         except requests.exceptions.RequestException as e:
             last_error = str(e)
+            is_network_error = True
+            continue
+        except (json.JSONDecodeError, ValueError) as e:
+            last_error = f"响应不是有效JSON: {e}"
             is_network_error = True
             continue
 

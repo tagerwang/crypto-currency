@@ -4,6 +4,7 @@
 """
 
 # 币安API基础URL（主站 + 备用站点）
+# 出站由 systemd + proxychains4 走 mihomo，代码层不写代理、不改域名
 SPOT_BASE_URLS = [
     "https://api.binance.com/api/v3",      # 主站
     "https://api1.binance.com/api/v3",     # 备用1
