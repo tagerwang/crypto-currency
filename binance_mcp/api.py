@@ -4,6 +4,7 @@
 """
 
 import json
+import subprocess
 import requests
 from typing import Dict, List, Any
 from datetime import datetime
@@ -11,6 +12,31 @@ from datetime import datetime
 from .config import SPOT_BASE_URLS, FUTURES_BASE_URLS, FUTURES_DATA_BASE_URLS, HEADERS, KLINE_INTERVALS, ALPHA_BASE_URL
 from .utils import format_number, timestamp_to_datetime, safe_float
 from .request_pool import fetch_spot_with_dedup, fetch_futures_with_dedup, fetch_futures_data_with_dedup
+
+
+def _record_proxy_fail() -> None:
+    """记一次经代理访问币安失败；达 probe-settings.json 中 fail_threshold 后自动探测节点。"""
+    try:
+        subprocess.Popen(
+            ["python3", "/opt/mihomo/binance-failcount.py", "fail"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception:
+        pass
+
+
+def _geo_blocked_error() -> Dict[str, Any]:
+    """451 是出口 IP 被币安地区限制，换 api1/api2 同出口无效，应立刻停。"""
+    _record_proxy_fail()
+    return {
+        "success": False,
+        "error": "API访问受地区限制，请切换代理节点",
+        "network_error": True,
+        "stop_execution": True,
+        "user_action_required": "⚠️ 当前代理出口被币安限制（HTTP 451），请切换节点后再试。",
+    }
 
 
 # Alpha代币符号缓存
@@ -28,19 +54,17 @@ def _do_spot_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
     for base_url in SPOT_BASE_URLS:
         url = f"{base_url}{endpoint}"
         try:
-            response = requests.get(url, params=params, headers=HEADERS, timeout=20)
-            
-            # 检查地区限制
+            response = requests.get(url, params=params, headers=HEADERS, timeout=10)
+
+            # 451 是出口 IP 被限制，api1–api4 同一出口，换域名无意义
             if response.status_code == 451:
-                continue  # 尝试下一个域名
-            
+                return _geo_blocked_error()
+
             response.raise_for_status()
             return {"success": True, "data": response.json()}
         except requests.exceptions.HTTPError as e:
             if response.status_code == 451:
-                last_error = "API访问受地区限制，请使用VPN或代理"
-                is_network_error = True
-                continue
+                return _geo_blocked_error()
             last_error = f"HTTP错误: {response.status_code}"
         except requests.exceptions.ConnectionError as e:
             last_error = "网络连接失败，请检查网络或代理设置"
@@ -60,6 +84,7 @@ def _do_spot_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
             continue
     
     error_msg = last_error or "所有API端点均不可用，请检查网络或使用代理"
+    _record_proxy_fail()
     return {
         "success": False, 
         "error": error_msg,
@@ -82,17 +107,15 @@ def _do_futures_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
     for base_url in FUTURES_BASE_URLS:
         url = f"{base_url}{endpoint}"
         try:
-            response = requests.get(url, params=params, headers=HEADERS, timeout=20)
+            response = requests.get(url, params=params, headers=HEADERS, timeout=10)
 
             if response.status_code == 451:
-                continue
+                return _geo_blocked_error()
             response.raise_for_status()
             return {"success": True, "data": response.json()}
         except requests.exceptions.HTTPError as e:
             if response.status_code == 451:
-                last_error = "API访问受地区限制，请使用VPN或代理"
-                is_network_error = True
-                continue
+                return _geo_blocked_error()
             last_error = f"HTTP错误: {response.status_code}"
         except requests.exceptions.ConnectionError as e:
             last_error = "网络连接失败，请检查网络或代理设置"
@@ -112,6 +135,7 @@ def _do_futures_request(endpoint: str, params: Dict = None) -> Dict[str, Any]:
             continue
 
     error_msg = last_error or "所有API端点均不可用"
+    _record_proxy_fail()
     return {
         "success": False,
         "error": error_msg,
@@ -134,17 +158,15 @@ def _do_futures_data_request(endpoint: str, params: Dict = None) -> Dict[str, An
     for base_url in FUTURES_DATA_BASE_URLS:
         url = f"{base_url.rstrip('/')}/{endpoint.lstrip('/')}"
         try:
-            response = requests.get(url, params=params, headers=HEADERS, timeout=20)
+            response = requests.get(url, params=params, headers=HEADERS, timeout=10)
 
             if response.status_code == 451:
-                continue
+                return _geo_blocked_error()
             response.raise_for_status()
             return {"success": True, "data": response.json()}
         except requests.exceptions.HTTPError as e:
             if response.status_code == 451:
-                last_error = "API访问受地区限制，请使用VPN或代理"
-                is_network_error = True
-                continue
+                return _geo_blocked_error()
             last_error = f"HTTP错误: {response.status_code}"
         except requests.exceptions.ConnectionError as e:
             last_error = "网络连接失败，请检查网络或代理设置"
@@ -164,6 +186,7 @@ def _do_futures_data_request(endpoint: str, params: Dict = None) -> Dict[str, An
             continue
 
     error_msg = last_error or "所有API端点均不可用"
+    _record_proxy_fail()
     return {
         "success": False,
         "error": error_msg,
